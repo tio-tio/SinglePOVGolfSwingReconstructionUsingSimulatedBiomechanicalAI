@@ -1,0 +1,18 @@
+# Logs
+*.log
+.*.log
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Model weights / binaries
+*.pt
+*.task
+
+# Generated evaluation outputs (large)
+Data/eval_runs/
+Data/overlays/
+
+# Datasets
+golfpose_data/
