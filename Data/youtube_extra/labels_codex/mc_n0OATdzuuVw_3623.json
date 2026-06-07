@@ -1,0 +1,12 @@
+{
+ "address": 28,
+ "toe_up": 42,
+ "mid_backswing": 56,
+ "top": 70,
+ "mid_downswing": 77,
+ "impact": 83,
+ "mid_follow_through": 90,
+ "finish": 97,
+ "elapsed_sec": 74.45426580030471,
+ "labeler": "codex_gpt5"
+}

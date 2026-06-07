@@ -81,17 +81,24 @@ class MotionBERTAdapter(BaseAdapter):
         sys.path.insert(0, str(motionbert_repo))
         from lib.model.DSTformer import DSTformer
 
-        # Architecture hyperparams per MotionBERT/configs/pose3d/*.yaml.
-        # Both lite and full pose3d-finetuned checkpoints use the SAME
-        # backbone hyperparams (the "lite/full" naming refers to which
-        # pretrained-backbone was fine-tuned from, not architectural size).
-        model = DSTformer(
-            dim_in=3, dim_out=3,
-            dim_feat=256, dim_rep=512,
-            depth=5, num_heads=8, mlp_ratio=4,
-            num_joints=17, maxlen=243,
-            att_fuse=True,
-        )
+        # Architecture hyperparams differ between Lite and Full:
+        #   - Lite (MB_lite.yaml): dim_feat=256, mlp_ratio=4
+        #   - Full (MB_pretrain.yaml): dim_feat=512, mlp_ratio=2
+        # Both share depth=5, num_heads=8, dim_rep=512, att_fuse=True.
+        if variant == "lite":
+            model = DSTformer(
+                dim_in=3, dim_out=3,
+                dim_feat=256, dim_rep=512,
+                depth=5, num_heads=8, mlp_ratio=4,
+                num_joints=17, maxlen=243, att_fuse=True,
+            )
+        else:  # full
+            model = DSTformer(
+                dim_in=3, dim_out=3,
+                dim_feat=512, dim_rep=512,
+                depth=5, num_heads=8, mlp_ratio=2,
+                num_joints=17, maxlen=243, att_fuse=True,
+            )
 
         # Download checkpoint from HF Hub. The official walterzhu/MotionBERT
         # repo has the 3D-pose-finetuned weights nested under checkpoint/.

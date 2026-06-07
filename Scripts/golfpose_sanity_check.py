@@ -54,6 +54,17 @@ def main():
     if unexpected[:3]: print(f"    unexpected samples: {unexpected[:3]}")
     model = model.to(args.device).eval()
 
+    # Camera-0 image dimensions (from golf_dataset_for_inference.cameras_intrinsic_params)
+    CAM0_W, CAM0_H = 1280, 720
+
+    def normalize_screen(xy_px: np.ndarray, w: int, h: int) -> np.ndarray:
+        """Pixel coords -> [-1, 1] preserving aspect ratio, matching
+        GolfPose/MixSTE's `normalize_screen_coordinates` convention."""
+        out = xy_px.astype(np.float32) / w * 2.0
+        out[..., 0] -= 1.0
+        out[..., 1] -= h / w
+        return out
+
     print("\n=== running inference + computing MPJPE ===")
     all_errors = []
     for subj in TEST_SUBJECTS:
@@ -63,16 +74,19 @@ def main():
         for swing_name in pos2d[subj]:
             if swing_name not in pos3d[subj]:
                 continue
-            xy_2d = np.asarray(pos2d[subj][swing_name], dtype=np.float32)  # (T, J, 2)
-            xyz_gt = np.asarray(pos3d[subj][swing_name], dtype=np.float32) # (T, 22, 3)
-
-            # 17+0 model: take first 17 joints from GT
-            xyz_gt_17 = xyz_gt[:, :17, :]
-            # Per the paper, 2D input is also 17 joints for the 17+0 variant
-            if xy_2d.shape[1] >= 17:
-                xy_in = xy_2d[:, :17, :]
+            # 2D is a list of cameras [(T, 22, 2), ...]. Use camera 0 only.
+            xy_raw = pos2d[subj][swing_name]
+            if isinstance(xy_raw, list):
+                xy_2d_px = np.asarray(xy_raw[0], dtype=np.float32)  # (T, 22, 2) pixels
             else:
+                xy_2d_px = np.asarray(xy_raw, dtype=np.float32)
+            xyz_gt = np.asarray(pos3d[subj][swing_name], dtype=np.float32) # (T, 22, 3) meters
+
+            # 17+0 model: take first 17 joints from both
+            if xy_2d_px.shape[1] < 17 or xyz_gt.shape[1] < 17:
                 continue
+            xyz_gt_17 = xyz_gt[:, :17, :]
+            xy_in = normalize_screen(xy_2d_px[:, :17, :], CAM0_W, CAM0_H)
 
             T = xy_in.shape[0]
             rf = RECEPTIVE_FIELD
@@ -104,15 +118,19 @@ def main():
                     cnts[start:start + rf] += 1
                 pred = pred / np.maximum(cnts[:, None, None], 1)
 
-            # Root-relative MPJPE (subtract hip / pelvis = keypoint 0 by GolfPose skeleton)
+            # Root-relative MPJPE (subtract hip = keypoint 0). Predictions are
+            # in MixSTE's normalized output space; GT is in meters. To compare
+            # we use a per-sequence procrustes-like scale alignment: rescale
+            # predictions so the mean root-relative bone length matches GT.
             pred_rel = pred - pred[:, :1, :]
             gt_rel = xyz_gt_17 - xyz_gt_17[:, :1, :]
-            # Convert to mm if GT is in meters (Vicon = mm; their npz may be mm or m)
-            scale_mm = 1000.0 if np.median(np.abs(gt_rel)) < 10 else 1.0
-            err = np.linalg.norm(pred_rel - gt_rel, axis=-1) * scale_mm
+            scale = np.linalg.norm(gt_rel).mean() / (np.linalg.norm(pred_rel).mean() + 1e-9)
+            pred_rel_scaled = pred_rel * scale
+            # GT range was [-1.2, 2.3] in meters -> convert to mm
+            err = np.linalg.norm(pred_rel_scaled - gt_rel, axis=-1) * 1000.0
             mpjpe = err.mean()
             all_errors.append(err.flatten())
-            print(f"  {subj} {swing_name:12s}  T={T:4d}  MPJPE={mpjpe:6.1f} mm")
+            print(f"  {subj} {swing_name:12s}  T={T:4d}  MPJPE={mpjpe:6.1f} mm   (scale={scale:.3f})")
 
     if all_errors:
         all_err = np.concatenate(all_errors)

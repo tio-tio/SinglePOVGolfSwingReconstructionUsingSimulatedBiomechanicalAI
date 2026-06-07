@@ -559,12 +559,29 @@ def compute_all_metrics(result: InferenceResult,
 
     # PCE (only if ground truth events are provided)
     if golfdb_events_relative is not None:
-        events_pred = derive_events_from_landmarks(xy, conf)
-        # foot planting: use address->impact from ground truth
-        address_idx = int(golfdb_events_relative[0])
-        impact_idx = int(golfdb_events_relative[5])
-        fp = foot_planting(xy, conf, address_idx, impact_idx)
-        metrics.update(fp)
+        # Check for LLM-cached event predictions: rows with frame=-1 and
+        # kp_name='EVENT::<name>' carry the predicted event frame in the x col.
+        event_rows = result.landmarks[result.landmarks["frame"] == -1]
+        llm_event_rows = event_rows[event_rows["kp_name"].str.startswith("EVENT::", na=False)]
+        if not llm_event_rows.empty:
+            events_pred = {}
+            for r in llm_event_rows.itertuples(index=False):
+                ev_name = r.kp_name.replace("EVENT::", "")
+                events_pred[ev_name] = int(r.x)
+            # LLM path: skip landmark-derived metrics since there are no real landmarks
+            for k in ("bone_cv_mean", "bone_cv_max", "jitter_mean_px",
+                       "jitter_max_px", "implausible_frac_mean",
+                       "implausible_frac_max", "detection_rate"):
+                if k in metrics: metrics[k] = float("nan")
+            metrics["left_ankle_planting_std_px"] = float("nan")
+            metrics["right_ankle_planting_std_px"] = float("nan")
+        else:
+            events_pred = derive_events_from_landmarks(xy, conf)
+            # foot planting: use address->impact from ground truth
+            address_idx = int(golfdb_events_relative[0])
+            impact_idx = int(golfdb_events_relative[5])
+            fp = foot_planting(xy, conf, address_idx, impact_idx)
+            metrics.update(fp)
         metrics.update(pce(events_pred, golfdb_events_relative, n_frames))
     else:
         # Without ground truth, planting uses 0..n/2 as a rough proxy

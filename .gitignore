@@ -6,13 +6,43 @@
 __pycache__/
 *.pyc
 
+# Virtual environments
+.venv/
+venv/
+
 # Model weights / binaries
 *.pt
+*.pt2
 *.task
+*.bin
+*.pth
 
 # Generated evaluation outputs (large)
 Data/eval_runs/
 Data/overlays/
 
-# Datasets
+# Datasets and downloaded media
 golfpose_data/
+Data/videos_160/
+Data/youtube_extra/raw/
+Data/youtube_extra/videos_160/
+Data/youtube_extra/_label_staging/
+Data/llm_staging/
+
+# Generated artifacts (regeneratable, large)
+Data/handoff/
+Data/visualizations/
+Data/motioncaddie_combined.pkl
+
+# Model checkpoints folder
+Models/
+
+# Large rendered HTML (also exported as PNG)
+Scripts/REPORT.html
+Scripts/REPORT_standalone.html
+
+# Editor cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store
