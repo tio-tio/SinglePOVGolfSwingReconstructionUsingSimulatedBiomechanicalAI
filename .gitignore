@@ -5,6 +5,8 @@
 # Python caches
 __pycache__/
 *.pyc
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
 
 # Virtual environments
 .venv/
@@ -46,3 +48,4 @@ Scripts/REPORT_standalone.html
 .idea/
 *.swp
 .DS_Store
+**/.DS_Store
