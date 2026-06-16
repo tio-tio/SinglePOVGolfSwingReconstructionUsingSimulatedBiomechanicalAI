@@ -50,40 +50,7 @@
   "backbone_2d": "mediapipe_lite",
   "lifter_3d": "motionbert_full_from_mediapipe_lite"
  },
- "events": [
-  {
-   "name": "address",
-   "frame_idx": 0
-  },
-  {
-   "name": "toe_up",
-   "frame_idx": 17
-  },
-  {
-   "name": "mid_backswing",
-   "frame_idx": 30
-  },
-  {
-   "name": "top",
-   "frame_idx": 42
-  },
-  {
-   "name": "mid_downswing",
-   "frame_idx": 57
-  },
-  {
-   "name": "impact",
-   "frame_idx": 63
-  },
-  {
-   "name": "mid_follow_through",
-   "frame_idx": 80
-  },
-  {
-   "name": "finish",
-   "frame_idx": 138
-  }
- ],
+ "events": [],
  "frames": [
   {
    "frame_idx": 0,

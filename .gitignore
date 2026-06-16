@@ -49,3 +49,6 @@ Scripts/REPORT_standalone.html
 *.swp
 .DS_Store
 **/.DS_Store
+
+# UE5 handoff zips (large, shared via Slack/Drive)
+motion_caddie_ue5_handoff*.zip
