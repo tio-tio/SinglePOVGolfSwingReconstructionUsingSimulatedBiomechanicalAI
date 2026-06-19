@@ -52,3 +52,15 @@ Scripts/REPORT_standalone.html
 
 # UE5 handoff zips (large, shared via Slack/Drive)
 motion_caddie_ue5_handoff*.zip
+
+# Raw GolfPose dataset (5.4 GB — not tracked in git)
+golfswing/
+
+# Large regenerable MediaPipe inference caches
+outputs/cache/mp_preds_*.csv
+
+# Large row-level output (regenerable from cache)
+outputs/baseline_mpjpe.csv
+
+# Claude Code session memory
+.claude/

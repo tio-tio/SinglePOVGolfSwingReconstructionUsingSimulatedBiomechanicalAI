@@ -1,0 +1,60 @@
+{
+  "description": "12 GolfPose body joints with direct MediaPipe equivalents",
+  "golfpose_to_mediapipe": {
+    "1": 24,
+    "2": 26,
+    "3": 28,
+    "4": 23,
+    "5": 25,
+    "6": 27,
+    "11": 11,
+    "12": 13,
+    "13": 15,
+    "14": 12,
+    "15": 14,
+    "16": 16
+  },
+  "mediapipe_to_golfpose": {
+    "24": 1,
+    "26": 2,
+    "28": 3,
+    "23": 4,
+    "25": 5,
+    "27": 6,
+    "11": 11,
+    "13": 12,
+    "15": 13,
+    "12": 14,
+    "14": 15,
+    "16": 16
+  },
+  "golfpose_joint_names": {
+    "1": "r_hip",
+    "2": "r_knee",
+    "3": "r_ankle",
+    "4": "l_hip",
+    "5": "l_knee",
+    "6": "l_ankle",
+    "11": "l_shoulder",
+    "12": "l_elbow",
+    "13": "l_wrist",
+    "14": "r_shoulder",
+    "15": "r_elbow",
+    "16": "r_wrist"
+  },
+  "dropped_golfpose_body_joints": {
+    "0": "hip (mid-pelvis) \u2014 no single MediaPipe equivalent; would need mean(23,24)",
+    "7": "spine \u2014 no MediaPipe landmark between hips and shoulders",
+    "8": "neck \u2014 no MediaPipe neck landmark",
+    "9": "neck_base \u2014 no MediaPipe neck_base landmark",
+    "10": "head \u2014 NOSE (MP 0) is too far anterior; excluded for precision"
+  },
+  "dropped_club_joints": {
+    "17": "shaft",
+    "18": "hosel",
+    "19": "heel",
+    "20": "toe_down",
+    "21": "toe_up"
+  },
+  "notes": "MediaPipe world landmarks: origin at mid-hip, Y increases downward (negative Y = above hip). GolfPose lab frame: Z is height (positive up), Y is front-back depth, X is left-right. Procrustes calibration on S1 recovers the 3D rotation+scale mapping from MP space to GP lab space."
+}

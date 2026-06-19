@@ -1,0 +1,7 @@
+Method,Overall_Z_MPJPE_mm,Best_joint,Best_joint_mm,Worst_joint,Worst_joint_mm,Delta_vs_baseline_mm
+MediaPipe raw,106.0,l_hip,5.3,r_wrist,165.3,0.0
++ Savitzky-Golay,105.8,l_hip,5.2,r_wrist,163.6,-0.2
++ Gaussian smoothing,105.8,l_hip,5.2,r_wrist,163.6,-0.2
++ Limb-length constraint,106.0,l_hip,5.3,r_wrist,165.3,0.0
++ Learned residual MLP,34.1,l_hip,13.3,r_elbow,57.8,-71.9
++ Combined (SG+Limb+MLP),32.7,l_hip,12.5,r_elbow,57.3,-73.2
