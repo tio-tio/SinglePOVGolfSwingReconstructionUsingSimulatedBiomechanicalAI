@@ -114,7 +114,8 @@ function renderGallery() {
     card.className = "clip-card";
     card.dataset.id = clip.id;
     card.innerHTML = `
-      <video src="assets/${esc(clip.id)}/raw.mp4" preload="metadata" muted playsinline></video>
+      <video src="assets/${esc(clip.id)}/raw.mp4" poster="assets/${esc(clip.id)}/poster.jpg"
+        preload="metadata" muted playsinline></video>
       <div class="clip-title">${esc(clip.title)}</div>
       <div class="clip-meta">${esc(clip.view)} · ${esc(clip.club)}</div>
       <div class="clip-cta">Open result</div>`;
@@ -884,7 +885,9 @@ async function init() {
     goto("pick");
   };
   $("#btn-restart").addEventListener("click", goHome);
-  $("#btn-home").addEventListener("click", goHome);   // brand = back to home
+  // brand = back to home; it's a real link (works without JS), but in-page
+  // reset is smoother than a full reload when the app is already running
+  $("#btn-home").addEventListener("click", (e) => { e.preventDefault(); goHome(); });
 
   // deep links + persistent library (reconcile: refresh kills polling)
   window.addEventListener("hashchange", onHashChange);

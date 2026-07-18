@@ -6,16 +6,18 @@
 <meta name="theme-color" content="#0c5c3a">
 <title>MotionCaddie — see your golf swing in 3D</title>
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="styles.css?v=20260717b">
+<link rel="stylesheet" href="styles.css?v=20260718c">
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
 </head>
 <body>
 
+<canvas id="hills-canvas" aria-hidden="true"></canvas>
+
 <header class="topbar">
-  <button class="brand" id="btn-home" type="button" title="Back to home" aria-label="MotionCaddie — back to home">
-    <span class="brand-mark" aria-hidden="true">⛳</span>
+  <a class="brand" id="btn-home" href="./" title="Back to home" aria-label="MotionCaddie — back to home">
+    <img class="brand-logo" src="assets/logo.png" alt="">
     <span class="brand-name">MotionCaddie</span>
-  </button>
+  </a>
   <nav class="progress-nav" aria-label="Progress">
     <span class="pstep" data-step="pick"><span class="pnum">1</span> Upload</span>
     <span class="psep"></span>
@@ -69,35 +71,11 @@
   <section class="demo-section">
     <div class="section-head">
       <h2>Demo swings</h2>
-      <p class="muted">Five swings analyzed with the real pipeline. Open one to see a full result.</p>
+      <p class="muted">A real swing analyzed with the full pipeline. Open it to see the result.</p>
     </div>
     <div id="clip-gallery" class="clip-gallery"><!-- demo cards injected by app.js --></div>
   </section>
 
-  <!-- capture guidance -->
-  <section class="tips">
-    <div class="tip card">
-      <span class="tip-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M6 20V8l6-4 6 4v12"/><path d="M12 4v16"/></svg>
-      </span>
-      <h3>One clean angle</h3>
-      <p>Face-on or down-the-line, camera square to you.</p>
-    </div>
-    <div class="tip card">
-      <span class="tip-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.4"/><path d="M12 8v7"/><path d="M8 11l4-1 4 1"/><path d="M9 21l3-6 3 6"/></svg>
-      </span>
-      <h3>Your whole body in frame</h3>
-      <p>Head to feet, club included, for the full swing.</p>
-    </div>
-    <div class="tip card">
-      <span class="tip-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
-      </span>
-      <h3>Good, even light</h3>
-      <p>Daylight or bright range light — avoid strong backlight.</p>
-    </div>
-  </section>
 </section>
 
 <!-- ============================= 2 · ANALYZE ============================ -->
@@ -303,10 +281,11 @@
   </div>
 </div>
 
+<script src="hills.js?v=20260718b"></script>
 <script type="module" src="replay3d.js?v=20260717b"></script>
 <script src="config.js?v=20260717b"></script>
 <script src="auth.js?v=20260717b"></script>
 <script src="chat.js?v=20260717b"></script>
-<script src="app.js?v=20260717b"></script>
+<script src="app.js?v=20260718b"></script>
 </body>
 </html>

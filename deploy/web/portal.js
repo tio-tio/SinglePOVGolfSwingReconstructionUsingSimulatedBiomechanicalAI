@@ -819,7 +819,7 @@ function init() {
     goto("pick");
   };
   $("#btn-restart").addEventListener("click", goHome);
-  $("#btn-home").addEventListener("click", goHome);   // brand = back to home
+  // brand is a plain link to the site home (index) — no handler needed
 
   window.addEventListener("hashchange", onHashChange);
   reconcileLibrary();

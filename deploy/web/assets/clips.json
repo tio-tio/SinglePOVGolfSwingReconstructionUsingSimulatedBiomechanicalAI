@@ -1,59 +1,11 @@
 {
-  "_note": "Curated demo clips, all backed by real pipeline output (Scripts/build_web_assets.py; overlays/replays One-Euro-smoothed; metrics/explanations from real scorecards as of 2026-07-06). Presence of 'render' lights up the '3D Swing View' tab (Blender stills via Scripts/blender_mocap.py, unisex, smoothed; optional 'video' plays above the stills).",
+  "_note": "Curated demo clips, all backed by real pipeline output (Scripts/build_web_assets.py; overlays/replays One-Euro-smoothed; metrics/explanations from real scorecards as of 2026-07-06). Presence of 'render' lights up the '3D Swing View' tab (Blender stills via Scripts/blender_mocap.py, unisex, smoothed; optional 'video' plays above the stills). Front end intentionally shows ONLY clip 269 (product call, 2026-07-18) — the other clip assets stay under assets/<id>/ (830 also backs the illustrative upload result via SAMPLE_ID) and re-listing one here is all it takes to bring its card back.",
   "clips": [
-    {
-      "id": "417",
-      "title": "Iron — tour-shaped tempo",
-      "view": "face-on",
-      "club": "iron",
-      "render": {
-        "video": "golfer_417_swing.mp4",
-        "phases": [
-          { "label": "Takeaway", "src": "golfer_417_preview_f044.png" },
-          { "label": "Mid-swing", "src": "golfer_417_preview_f148.png" },
-          { "label": "Follow-through", "src": "golfer_417_preview_f251.png" }
-        ]
-      }
-    },
-    {
-      "id": "886",
-      "title": "Driver — power with a story",
-      "view": "face-on",
-      "club": "driver",
-      "render": {
-        "video": "golfer_886_swing.mp4",
-        "phases": [
-          { "label": "Takeaway", "src": "golfer_886_preview_f043.png" },
-          { "label": "Mid-swing", "src": "golfer_886_preview_f144.png" },
-          { "label": "Follow-through", "src": "golfer_886_preview_f245.png" }
-        ]
-      }
-    },
-    {
-      "id": "830",
-      "title": "Sample swing A",
-      "view": "face-on",
-      "club": "driver"
-    },
     {
       "id": "269",
       "title": "Sample swing B",
       "view": "down-the-line",
       "club": "driver"
-    },
-    {
-      "id": "0",
-      "title": "Sample swing C",
-      "view": "face-on",
-      "club": "driver",
-      "_render_note": "Clip 0's stills are from the MotionBERT-full lift — regenerate via the MixSTE path once the model bundle lands and overwrite assets/0/blender/*.png in place (same filenames = no manifest change).",
-      "render": {
-        "phases": [
-          { "label": "Takeaway", "src": "golfer_0_preview_f020.png" },
-          { "label": "Mid-swing", "src": "golfer_0_preview_f069.png" },
-          { "label": "Follow-through", "src": "golfer_0_preview_f117.png" }
-        ]
-      }
     }
   ]
 }
