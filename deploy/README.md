@@ -96,7 +96,9 @@ the same `{ metrics, explanation, replay, overlayUrl, rawUrl }` shape.
 Everything is relative-path static, so:
 
 ```bash
-aws s3 sync deploy/web s3://<TODO-hosting-bucket> --delete   # bucket TBD
+# canonical command lives in deploy/infra/README.md ("Deploy & sync");
+# bucket is motion-caddie-web-<acct> from the motion-caddie-web stack
+aws s3 sync deploy/web/ s3://<WebBucketName>/ --delete --exclude ".DS_Store"
 ```
 
 then front the bucket with CloudFront (Origin Access Control, default root

@@ -5,7 +5,7 @@ auth), on top of the serverless demo stack. **cfn-lint clean (0 errors, 0 warnin
 Designed around one constraint: **limited AWS credits → nothing idles, everything has a
 ceiling.**
 
-`web_hosting.yaml` — Phase 1 of `deploy/web/DEPLOYMENT_PLAN.md`: hosts the static
+`web_hosting.yaml` — Phase 1 of `deploy/DEPLOYMENT_PLAN.md`: hosts the static
 `deploy/web/` front end. See its own section below; it's a separate, independently
 teardownable stack from `full_app.yaml`.
 
@@ -127,7 +127,10 @@ aws cloudformation describe-stacks --stack-name motion-caddie-web \
   --query "Stacks[0].Outputs"
 
 # ship the site (re-run after any deploy/web/ change)
-aws s3 sync deploy/web/ s3://<WebBucketName>/ --delete
+# deploy/web/ is the publish root: EVERYTHING in it becomes public, so keep
+# internal docs out of it (they live in deploy/). The exclude is only a guard
+# against macOS Finder junk.
+aws s3 sync deploy/web/ s3://<WebBucketName>/ --delete --exclude ".DS_Store"
 
 # CloudFront caches aggressively — bust the cache after a sync
 aws cloudfront create-invalidation --distribution-id <DistributionId> --paths "/*"
