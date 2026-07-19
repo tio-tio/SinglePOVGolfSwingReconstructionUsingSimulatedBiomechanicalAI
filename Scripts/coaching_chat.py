@@ -63,15 +63,23 @@ class SwingContext:
     a: dict
     kb: dict
     b: dict | None = None
+    ball: dict | None = None            # ball_3d.json (measured track + flight fit)
     conf: dict = field(default_factory=_load_confidence)
     a_label: str = "this swing"
     b_label: str = "the earlier swing"
 
     @classmethod
-    def from_files(cls, a_path: str | Path, b_path: str | Path | None = None) -> "SwingContext":
+    def from_files(cls, a_path: str | Path, b_path: str | Path | None = None,
+                   ball_path: str | Path | None = None) -> "SwingContext":
         a = json.loads(Path(a_path).read_text(encoding="utf-8"))
         b = json.loads(Path(b_path).read_text(encoding="utf-8")) if b_path else None
-        return cls(a=a, kb=v2.load_kb(), b=b)
+        ball = None
+        if ball_path and Path(ball_path).exists():
+            try:
+                ball = json.loads(Path(ball_path).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                ball = None
+        return cls(a=a, kb=v2.load_kb(), b=b, ball=ball)
 
     # -- per-indicator helpers ------------------------------------------------
     def has(self, key: str, which: str = "a") -> bool:
@@ -249,6 +257,59 @@ def _t_estimate_ball_flight(ctx: SwingContext, inp: dict) -> dict:
     return res
 
 
+def _t_get_ball_flight(ctx: SwingContext, inp: dict) -> dict:
+    """THIS swing's ball flight: measured from the video track when available,
+    else the physics-simulation fallback. Display numbers are pre-rounded -
+    the grounding verifier matches answer numbers against these exactly."""
+    ball = ctx.ball or {}
+    q = ball.get("quality")
+    if q in ("measured", "partial"):
+        fit = ball.get("fit", {})
+        fl = ball.get("flight", {})
+        az = fit.get("azimuth_deg") or 0.0
+        direction = ("right of the camera line" if az > 3
+                     else "left of the camera line" if az < -3
+                     else "straight down the camera line")
+        res: dict = {
+            "quality": q,
+            "launch_angle_deg": fit.get("launch_deg"),
+            "start_direction_deg": az,
+            "start_direction": direction,
+            "ball_speed_mph": fit.get("ball_speed_mph"),
+            "carry_yd": fl.get("carry_yd"),
+            "apex_yd": fl.get("apex_yd"),
+            "flight_time_s": fl.get("flight_time_s"),
+            "n_track_points": ball.get("n_track_points"),
+            "direction_note": ball.get("azimuth_note"),
+        }
+        if q == "measured":
+            ci = ball.get("ci_10_90") or {}
+            if ci.get("carry_yd"):
+                res["carry_range_yd"] = [round(ci["carry_yd"][0]), round(ci["carry_yd"][1])]
+            if ci.get("speed_mph"):
+                res["speed_range_mph"] = [round(ci["speed_mph"][0]), round(ci["speed_mph"][1])]
+            res["how_to_phrase"] = (
+                "MEASURED: the ball was tracked in the video and these numbers come from a "
+                "physics fit to that track. Answer distance questions confidently - e.g. "
+                "'your carry was about " + str(res["carry_yd"]) + " yards, measured from "
+                "your video' - and give the range only if asked about precision.")
+        else:
+            res["speed_source"] = "club-typical (not measured)"
+            res["how_to_phrase"] = (
+                "PARTIAL: launch direction and angle were measured from the video ball track, "
+                "but ball speed was assumed from club norms. State direction and launch "
+                "confidently; give carry as an estimate informed by the measured launch.")
+        traj = ball.get("trajectory_world")
+        if traj:
+            res["_ui_trajectory"] = traj
+        return res
+    res = _t_estimate_ball_flight(ctx, inp)
+    res["quality"] = "simulated"
+    res["how_to_phrase"] = ("SIMULATED: the ball was not trackable in this video; this is a "
+                            "physics simulation from typical launch conditions. Always say so.")
+    return res
+
+
 # (name -> (json-schema, fn)). Schemas are the model-facing tool contract.
 TOOLS: dict[str, tuple[dict, ToolFn]] = {
     "list_indicators": ({
@@ -291,8 +352,20 @@ TOOLS: dict[str, tuple[dict, ToolFn]] = {
                          "properties": {"key": {"type": "string"}},
                          "required": ["key"], "additionalProperties": False},
     }, _t_compare_indicator),
+    "get_ball_flight": ({
+        "description": "Get THIS swing's ball flight. Uses the MEASURED ball track from the "
+                       "video when available (quality 'measured': speed/launch/carry from the "
+                       "actual tracked ball, with confidence ranges; 'partial': launch "
+                       "direction/angle measured, speed assumed from club norms; 'simulated': "
+                       "no track - physics simulation). ALWAYS call this first for questions "
+                       "about how far or where the ball went, carry, height, or trajectory, "
+                       "and follow the result's how_to_phrase guidance.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    }, _t_get_ball_flight),
     "estimate_ball_flight": ({
-        "description": "SIMULATE the likely ball flight for this swing's club with a physics "
+        "description": "WHAT-IF simulator (different club or golfer-stated launch numbers). "
+                       "For this swing's actual flight call get_ball_flight instead. "
+                       "SIMULATE the likely ball flight for this swing's club with a physics "
                        "model (McNally et al. 2023). Returns estimated carry, curve, apex and "
                        "flight time plus the launch conditions assumed. This is an ESTIMATE "
                        "from typical launch conditions for the club — the ball itself is not "
@@ -364,12 +437,19 @@ Handle broad and multi-part questions (don't punt to "which one?"):
   - FOLLOW-UPS and references ("all of the above", "and my hips?", "those"): resolve them from the
     conversation so far, then fetch and answer.
 
-SIMULATED ball-flight estimates (the one exception to "measured only"):
-  - When the golfer asks how far the ball went / would go, about carry, height, or trajectory,
-    call `estimate_ball_flight`. The ball is NOT tracked in the video — the tool runs a physics
-    simulation from typical launch conditions for the recorded club (or numbers the golfer
-    states; pass those as inputs). Quote its numbers exactly as returned, and ALWAYS say the
-    result is a simulated estimate for a typical swing with that club, not a measurement.
+BALL FLIGHT (how far / where did it go, carry, height, trajectory):
+  - Call `get_ball_flight` first. Its `quality` field tells you how to answer:
+      "measured"  -> the ball WAS tracked in the video; speed/launch/carry come from a physics
+                     fit to the real track. Answer distance questions confidently ("your carry
+                     was about 260 yards, measured from your video"); cite the confidence range
+                     only if asked about precision.
+      "partial"   -> launch direction + angle are measured; ball speed is assumed from club
+                     norms. State direction/launch confidently; frame carry as an estimate
+                     informed by the measured launch.
+      "simulated" -> no usable ball track; a physics simulation from typical launch conditions.
+                     ALWAYS disclose that it is a simulated estimate, not a measurement.
+  - `estimate_ball_flight` is only for what-if questions (a different club, golfer-stated
+    launch numbers). Quote numbers exactly as returned; follow each result's how_to_phrase.
 
 When to REFUSE (do not guess):
   - UNMEASURED: the question is about something not in `list_indicators` and not simulable
@@ -728,6 +808,8 @@ def verify_chat_grounding(ctx: SwingContext, result: TurnResult) -> dict:
     for entry in result.tool_log:
         r = model_visible(entry["result"])  # UI-only payloads can't ground an answer
         if entry["name"] == "estimate_ball_flight" and r.get("estimated"):
+            sim_ok = True
+        if entry["name"] == "get_ball_flight" and r.get("quality"):
             sim_ok = True
         if entry["name"] == "get_flagged_observations":
             # each flag IS a tool-asserted out-of-range judgment for its metric,

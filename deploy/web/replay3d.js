@@ -90,6 +90,27 @@ class CapsuleViewer3D {
     }
     this.radius = radius;
 
+    // measured ball trajectory (injected by ball_step): [[t_s, x, y, z], ...]
+    // in the same h36m-camera frame as the joints. Rendered at TRUE scale —
+    // a drive flies ~200 m, so the arc extends far beyond the body-scale scene;
+    // controls' zoom-out range and the ground plane are widened to match, and
+    // the ball grows with distance (tracer-style) so it stays visible.
+    this.ballTrack = null;
+    this.ballImpact = null;
+    this.ballExtent = 0;
+    if (data.ball && Array.isArray(data.ball.trajectory) && data.ball.trajectory.length > 1) {
+      const pts = [];
+      for (const [t, x, y, z] of data.ball.trajectory) {
+        const v = new THREE.Vector3((x - mh[0]) * scale, (-y - mh[1]) * scale, (-z - mh[2]) * scale);
+        pts.push({ t, v });
+        this.ballExtent = Math.max(this.ballExtent, v.length());
+      }
+      if (pts.length > 1) {
+        this.ballTrack = pts;
+        this.ballImpact = data.ball.impact_frame || 0;
+      }
+    }
+
     this._initScene(floorY);
     this._buildBody();
     this._bindUI();
@@ -109,7 +130,8 @@ class CapsuleViewer3D {
     const s = this.scene = new THREE.Scene();
     s.background = new THREE.Color(0x0f2019);
 
-    const cam = this.camera = new THREE.PerspectiveCamera(38, 1, 0.01, 100);
+    const far = Math.max(100, this.ballExtent * 4);   // keep a long ball arc in frustum
+    const cam = this.camera = new THREE.PerspectiveCamera(38, 1, 0.01, far);
     const d = this.radius / Math.sin((cam.fov * Math.PI / 180) / 2) * 1.15;
     cam.position.set(d * 0.35, d * 0.12, d);
 
@@ -119,7 +141,8 @@ class CapsuleViewer3D {
     ctr.dampingFactor = 0.08;
     ctr.enablePan = false;
     ctr.minDistance = this.radius * 1.2;
-    ctr.maxDistance = this.radius * 6;
+    // with a measured ball arc, let the user zoom out far enough to see it land
+    ctr.maxDistance = Math.max(this.radius * 6, this.ballExtent * 1.25);
 
     s.add(new THREE.HemisphereLight(0xdfe7ee, 0x2a2f2c, 1.15));
     const key = new THREE.DirectionalLight(0xffffff, 2.1);
@@ -130,9 +153,10 @@ class CapsuleViewer3D {
     Object.assign(key.shadow.camera, { left: -sc, right: sc, top: sc, bottom: -sc, near: 0.1, far: 20 });
     s.add(key);
 
-    // subtle ground to catch a shadow
+    // subtle ground to catch a shadow (wide enough for the ball arc if present)
+    const gsz = Math.max(this.radius * 8, this.ballExtent * 2.6);
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.radius * 8, this.radius * 8),
+      new THREE.PlaneGeometry(gsz, gsz),
       new THREE.MeshStandardMaterial({ color: 0x16281f, roughness: 1.0 }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = floorY - 0.02;
@@ -171,6 +195,20 @@ class CapsuleViewer3D {
       m.castShadow = false;
       this.club.push({ mesh: m, a: b.a, b: b.b });
     }
+    // measured ball: white sphere animated along the tracked flight + faint arc
+    if (this.ballTrack) {
+      const arcGeo = new THREE.BufferGeometry().setFromPoints(this.ballTrack.map(p => p.v));
+      const arc = new THREE.Line(arcGeo,
+        new THREE.LineBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.55 }));
+      this.scene.add(arc);
+      this.ballArc = arc;
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(0.05, 16, 12),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 }));
+      ball.visible = false;
+      this.scene.add(ball);
+      this.ballMesh = ball;
+    }
     this._pose(0);
   }
 
@@ -198,6 +236,23 @@ class CapsuleViewer3D {
     m.scale(new THREE.Vector3(1, len, 1));
     m.setPosition(new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5));
     this.torso.matrix.copy(m);
+    if (this.ballMesh) {
+      const tf = (t - this.ballImpact) / this.fps;   // seconds since impact
+      const trk = this.ballTrack;
+      if (tf < 0 || tf > trk[trk.length - 1].t) {
+        this.ballMesh.visible = false;
+      } else {
+        let k = 1;
+        while (k < trk.length - 1 && trk[k].t < tf) k++;
+        const a2 = trk[k - 1], b2 = trk[k];
+        const w = (tf - a2.t) / ((b2.t - a2.t) || 1e-6);
+        this.ballMesh.position.lerpVectors(a2.v, b2.v, Math.min(Math.max(w, 0), 1));
+        // tracer sizing: keep the ball a few pixels tall however far it flies
+        const s = 1 + this.ballMesh.position.length() * 0.28;
+        this.ballMesh.scale.set(s, s, s);
+        this.ballMesh.visible = true;
+      }
+    }
     if (this.ui.label) this.ui.label.textContent = `${t + 1} / ${this.frames.length}`;
     if (this.ui.scrub) this.ui.scrub.value = t;
   }

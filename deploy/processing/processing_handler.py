@@ -51,7 +51,10 @@ ARTIFACTS = ["overlay.mp4", "replay_3d.json", "metrics.json", "explanation.json"
              "pose_debug.mp4", "pose_diag.json",
              # full scorecard: the chat Lambda reads it (via CloudFront) so the
              # coach can answer questions about uploaded swings too
-             "scorecard.json"]
+             "scorecard.json",
+             # measured ball track + physics-fit flight (chat tool + trajectory UI);
+             # written with quality:"simulated" when no confident track exists
+             "ball_3d.json"]
 # the web app's pollJob() marks a job ready only once ALL of these exist — fail
 # the message loudly (SQS retry) rather than leave a job that never completes
 REQUIRED_ARTIFACTS = {"overlay.mp4", "replay_3d.json", "metrics.json", "explanation.json"}
@@ -135,6 +138,19 @@ def _pipeline(video: Path, work: Path) -> dict:
     if fps:
         sc_cmd += ["--fps", str(fps)]  # enables the time-based hand-speed indicator
     _run(sc_cmd, "event detection + scorecard")
+    # ball tracking + flight fit: emits ball_3d.json and redraws the ball onto
+    # overlay.mp4 — non-fatal (artifact carries quality:"simulated" on no-track,
+    # and jobs must not fail over a missing ball)
+    try:
+        _run([PY, str(SCRIPTS / "ball_step.py"), str(video),
+              "--landmarks", str(work / f"{stem}_landmarks_2d.csv"),
+              "--scorecard", str(scorecard),
+              "--replay", str(work / f"{stem}_replay_3d.json"),
+              "--overlay", str(work / f"{stem}_overlay.mp4"),
+              "--out", str(work / f"{stem}_ball_3d.json")],
+             "ball tracking + flight fit")
+    except RuntimeError as e:
+        print(f"[proc] ball step skipped: {e}", flush=True)
     # grounded Claude eval (needs ANTHROPIC_API_KEY in env) — writes the LLM
     # explanation back INTO the scorecard JSON; non-fatal if it fails
     try:

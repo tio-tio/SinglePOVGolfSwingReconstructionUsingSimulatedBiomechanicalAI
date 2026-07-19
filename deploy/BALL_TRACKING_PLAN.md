@@ -4,8 +4,12 @@ Goal: a ball-tracking stage that runs in **parallel with the 2D skeleton stage**
 **3D uplift of the ball trajectory**, wired end-to-end into the deployed pipeline and validated on
 `C:\Users\Banjo\Downloads\IMG_3434.MOV` and `C:\Users\Banjo\Downloads\IMG_8107.MOV`.
 
-Loop state: **research iteration 7 of ~8 complete** (then 7 implement→test→deploy iterations,
-then final phase: git commit, deploy demo+dev pages, e2e retest, LLM ball-data tool).
+Loop state: **I6 COMPLETE, I7 (cloud E2E) IN PROGRESS** — image v12 building (v11 was missing
+Scripts/adapters/ in the source zip). NOTE 2026-07-18: a git merge in the working tree
+reverted uncommitted edits to 6 tracked files; all were restored from the built deploy
+artifacts (proc-src.zip, chat-lambda package, S3 web copies). index.html/portal.html are in
+merge conflict (teammate's ballflight.js work) — left untouched for the user to resolve;
+their script tags will need the ?v=20260718a bump re-applied after resolution.
 
 ## Iteration log
 
@@ -207,9 +211,55 @@ cross-check vs hand_speed indicator, sidespin/curvature fit once tracks are long
 ### R8 (pending) — consolidate: cloud-image constraints (scipy present? runtime budget,
 numpy<2), artifact/DB wiring, chat tool + UI shape, implementation spec + I1–I7 task list.
 
-## Implement→test→deploy loop (after research)
-I1–I7 (pending): adapter + registry, uplift step, pipeline.py + processing_handler wiring,
-artifacts/UI, end-to-end on both videos locally, deploy image rebuild, cloud validation.
+### R8 ✅ — consolidation: NO scipy in cloud image (hand-rolled Nelder-Mead); web deploy =
+s3 cp + CloudFront invalidation (E1OPRZIXL2IZX); chat Lambda zip via build_lambda_zip.sh;
+processing image via CodeBuild loop (memory: aws-capstone-account).
+
+## Implement→test→deploy log
+### I1 ✅ — Scripts/ball_track.py: subpixel tracker + guarded predictive extension +
+hand-rolled NM physics fit + launch_dt_s 4th param + 85% trimmed robust loss + quality tiers
+(measured ≥15 pts / partial ≥8 / simulated) + bootstrap CI. demo.py _lrfix cache bug fixed.
+Scripts/test_ball_track.py: both clips PASS (3434 measured n=16 resid 2.3 px: speed 164,
+launch 26.5°, azim +23.5°, carry 259 [CI 261–271]; 8107 partial n=9: launch 6.9°,
+azim +17.9°, envelope carry 184).
+### I2 ✅ — Scripts/ball_step.py: ball_3d.json + trajectory_replay (mid-ankle anchor,
+standing-height scale) + ball injected into replay_3d.json + overlay.mp4 re-encoded with
+ball dot/trail (visually verified). Wired into demo.py + processing_handler (_pipeline,
+non-fatal; ball_3d.json in ARTIFACTS, not REQUIRED).
+### I3 ✅ — get_ball_flight chat tool (measured/partial/simulated + how_to_phrase per tier,
+confident measured phrasing per user), SwingContext.ball, system-prompt BALL FLIGHT section,
+verifier accepts tool's range phrasing; chat_handler job_ball_path (03_outputs fetch) +
+ball_path_for (demo); build_lambda_zip.sh bundles ball_3d.json.
+### I4 ✅ — replay3d.js: true-scale measured arc + animated tracer ball (far-plane fix:
+was 100 m, clipped the arc; controls/ground scale with extent); chat.js arc label
+quality-aware ("measured from your video").
+### I5 ✅ — local E2E green: clean demo.py runs on both videos, all artifacts present;
+scripted-backend chat turn grounded=True with confident measured answer; regression PASS.
+### I6 ✅ — cloud deploys: image v11→v12 (v11 lacked Scripts/adapters/ — zip must include
+Scripts RECURSIVELY), motion-caddie-processing → v12, motion-caddie-chat zip updated,
+chat.js/replay3d.js to S3 (no-cache) + invalidation. Gotcha: git-bash mangles /paths in
+CloudFront/logs CLI args — use PowerShell.
+### I7 ✅ — cloud E2E VERIFIED on image v12 (2026-07-18)
+- Jobs f0b3cebf7564… (IMG_3434) + 189323e45d67… (IMG_8107) re-triggered via S3
+  copy-in-place after the v11 adapters-import failure; both produced the FULL artifact set
+  incl. ball_3d.json in 03_outputs/.
+- Cloud fits match local: 3434 measured (163.3 mph, launch 26.4°, azim +23.6°, carry 258);
+  8107 partial (launch 7.1°, azim +18.1°, envelope carry 185).
+- **Live chat (Bedrock Lambda) verified, grounded=True, zero violations:**
+  - measured: "Your carry was about **258 yards**, measured from your video…"
+  - partial: measured direction (+ camera-line caveat) with informed-estimate distance.
+
+## Final phase status
+- Deploys + e2e retest + LLM ball tool: ✅ DONE (I6/I7 — live and verified).
+- **Git commit: BLOCKED on the user's in-progress merge** (index.html/portal.html in
+  conflict with the incoming ballflight.js work). After the merge is resolved: commit
+  Scripts/{ball_track,ball_step,test_ball_track}.py, Scripts/{demo,coaching_chat}.py,
+  deploy/processing/processing_handler.py, deploy/chat_handler.py,
+  deploy/chat/build_lambda_zip.sh, deploy/web/{chat.js,replay3d.js}, this plan; re-apply
+  the ?v=20260718a script-tag bump to the resolved index.html/portal.html and re-upload
+  them. Dev helpers to EXCLUDE from the commit: deploy/web/_ball_test.html,
+  _balltest_replay.json, Scripts/{ball_track_proto,ball_fit_proto}.py (research artifacts —
+  keep or drop at user's discretion).
 
 ## Final phase (user-added 2026-07-17, after I1–I7)
 - Commit work to git.

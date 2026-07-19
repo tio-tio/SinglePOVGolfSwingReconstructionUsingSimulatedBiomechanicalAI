@@ -80,6 +80,29 @@ def job_scorecard_path(job_id: str):
         return None
 
 
+def job_ball_path(job_id: str):
+    """Fetch + cache an uploaded swing's ball_3d.json (measured ball flight).
+    Absent for older jobs / trackless videos — None is a normal result and the
+    chat simply falls back to the simulated flight."""
+    import urllib.parse
+    import urllib.request
+    cache = Path("/tmp") / f"job_ball_{job_id}.json"
+    if cache.exists():
+        return cache
+    url = f"{JOB_SCORECARD_BASE}/{job_id}/ball_3d.json"
+    if MC_RESULTS_TOKEN:
+        url += "?t=" + urllib.parse.quote(MC_RESULTS_TOKEN)
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            raw = r.read()
+        json.loads(raw)                      # reject the index.html rewrite
+        cache.write_bytes(raw)
+        return cache
+    except Exception as e:
+        print(f"[chat] job ball_3d fetch skipped for {job_id}: {e}")
+        return None
+
+
 def _sanitize_history(raw) -> list[dict]:
     """Keep only alternating user/assistant TEXT turns. Drop tool blocks and any
     non-string content the client may have injected."""
@@ -101,13 +124,23 @@ def scorecard_path(clip_id: int) -> Path:
     return SCORECARD_DIR / str(clip_id) / f"{clip_id}_scorecard.json"
 
 
+def ball_path_for(scorecard: str | Path) -> Path | None:
+    """ball_3d.json sitting next to a scorecard (demo bundles + cached jobs)."""
+    p = Path(scorecard)
+    cand = p.with_name(p.name.replace("_scorecard.json", "_ball_3d.json")
+                       if p.name.endswith("_scorecard.json") else "ball_3d.json")
+    return cand if cand.exists() else None
+
+
 def chat_once(scorecard: str | Path, question: str, history: list[dict] | None = None,
               compare: str | Path | None = None,
-              backend_factory: Callable[[], C.Backend] = C.AnthropicBackend) -> dict:
+              backend_factory: Callable[[], C.Backend] = C.AnthropicBackend,
+              ball: str | Path | None = None) -> dict:
     """Run ONE grounded chat turn. Pure core — no HTTP, injectable backend."""
     if not question or not question.strip():
         return {"error": "empty question"}
-    ctx = C.SwingContext.from_files(scorecard, compare)
+    ctx = C.SwingContext.from_files(scorecard, compare,
+                                    ball_path=ball or ball_path_for(scorecard))
     convo = C.Conversation(ctx, backend_factory())
     convo.messages = _sanitize_history(history)  # untrusted text-only context
     res = convo.ask(question.strip()[:MAX_QUESTION_CHARS])
@@ -147,6 +180,7 @@ def handler(event, _ctx=None):
     raw_id = body.get("clip_id")
     clip_id: int | str
     sc = None
+    ball = None
     if isinstance(raw_id, str) and _JOB_ID.match(raw_id):
         # a processed UPLOAD (hex job id) — private: requires the access code
         if not JOB_SCORECARD_BASE:
@@ -157,6 +191,7 @@ def handler(event, _ctx=None):
         sc = job_scorecard_path(raw_id)
         if sc is None:
             return _resp(404, {"error": "no scorecard for this upload (yet)"})
+        ball = job_ball_path(raw_id)         # None for older/trackless jobs
     else:
         try:
             clip_id = int(raw_id)
@@ -196,7 +231,8 @@ def handler(event, _ctx=None):
                 return _resp(400, {"error": "invalid compare_clip_id"})
 
     try:
-        out = chat_once(sc, question, history=body.get("history"), compare=compare)
+        out = chat_once(sc, question, history=body.get("history"), compare=compare,
+                        ball=ball)
     except Exception as e:  # never leak a stack trace; surface a request id in logs
         print(f"[chat] error: {type(e).__name__}: {e}")
         return _resp(502, {"error": "chat backend failed"})

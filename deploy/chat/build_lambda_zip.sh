@@ -23,7 +23,7 @@ cp "$ROOT/Data/coaching/indicator_kb.json" "$PKG/Data/coaching/"
 cp "$ROOT/Data/coaching/ball_flight_nn.json" "$PKG/Data/coaching/"   # Phys-NN weights
 
 # 3. cached demo scorecards only (skip mp4s/frames — not read by /chat)
-find "$ROOT/Data/demo" -name "*_scorecard.json" | while read -r f; do
+find "$ROOT/Data/demo" \( -name "*_scorecard.json" -o -name "*_ball_3d.json" \) | while read -r f; do
   rel="${f#"$ROOT"/Data/demo/}"; mkdir -p "$PKG/Data/demo/$(dirname "$rel")"
   cp "$f" "$PKG/Data/demo/$rel"
 done

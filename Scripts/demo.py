@@ -79,10 +79,15 @@ def demo_raw_video(video: Path, backbone="mediapipe_lite", lifter="golfpose3d"):
     if not ok:
         return
 
-    # Step 2: the lifter cached the 3D parquet here:
-    parquet_3d = CACHE_3D_DIR.parent / f"{lifter}_from_{backbone}" / f"{stem}.parquet"
-    if not parquet_3d.exists():
-        print(f"  !! expected 3D cache not found: {parquet_3d}")
+    # Step 2: the lifter cached the 3D parquet here — the L/R-repair path writes it
+    # under the _lrfix backbone name, so prefer that variant (mirrors the cloud
+    # handler's lookup in deploy/processing/processing_handler.py).
+    cache_root = CACHE_3D_DIR.parent
+    candidates = [cache_root / f"{lifter}_from_{backbone}_lrfix" / f"{stem}.parquet",
+                  cache_root / f"{lifter}_from_{backbone}" / f"{stem}.parquet"]
+    parquet_3d = next((p for p in candidates if p.exists()), None)
+    if parquet_3d is None:
+        print(f"  !! expected 3D cache not found: {candidates[1]}")
         return
 
     # Step 3: detector + scorecard (separate process, torch only)
@@ -90,6 +95,13 @@ def demo_raw_video(video: Path, backbone="mediapipe_lite", lifter="golfpose3d"):
               "--out-dir", str(out_dir), "--stem", stem],
              "Event detection + coaching scorecard")
     if ok:
+        run([PY, "ball_step.py", str(video),
+             "--landmarks", str(out_dir / f"{stem}_landmarks_2d.csv"),
+             "--scorecard", str(out_dir / f"{stem}_scorecard.json"),
+             "--replay", str(out_dir / f"{stem}_replay_3d.json"),
+             "--overlay", str(out_dir / f"{stem}_overlay.mp4"),
+             "--out", str(out_dir / f"{stem}_ball_3d.json")],
+            "Ball tracking + flight fit")
         run([PY, "coaching_explain.py", "--scorecard",
              str(out_dir / f"{stem}_scorecard.json")],
             "LLM explanation (gated f_strict_grounding)")
