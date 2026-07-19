@@ -112,25 +112,115 @@ def load_kb() -> dict:
 
 
 def build_kb_block(kb: dict) -> str:
-    """The full KB as a stable string (identical across every clip → cacheable
-    on the Anthropic backend). We send all cards so the prefix never changes;
-    the model is told to use only the cards for the indicators it's shown."""
-    lines = ["KNOWLEDGE BASE — use only this wording for golf terms.\n", "GLOSSARY:"]
-    for term, gloss in kb["glossary"].items():
+    """Build the stable knowledge-base prompt sent to the LLM.
+
+    Supports both the original 0.1 KB fields and the expanded 0.2 fields
+    generated from the Markdown knowledge cards.
+    """
+    lines = [
+        "KNOWLEDGE BASE — use only these definitions and interpretation rules.",
+        "Describe measured movement neutrally. Do not invent causes, diagnoses, "
+        "shot outcomes, corrections, or ideal targets.",
+        "",
+        "GLOSSARY:",
+    ]
+
+    for term, gloss in kb.get("glossary", {}).items():
         lines.append(f"  - {term}: {gloss}")
+
     lines.append("\nINDICATOR CARDS:")
-    for key, c in kb["indicators"].items():
-        lines.append(f"\n[{key}] {c['label']} ({c['plain_name']}) — event: {c['event']}, unit: {c['unit']}")
-        lines.append(f"  measures: {c['measures']}")
-        lines.append(f"  why: {c['why']}")
-        lines.append(f"  in_range: {c['in_range_phrasing']}")
-        if c.get("out_low_phrasing"):
-            lines.append(f"  if_below_range: {c['out_low_phrasing']}")
-        if c.get("out_high_phrasing"):
-            lines.append(f"  if_above_range: {c['out_high_phrasing']}")
-        if c.get("glosses"):
-            for t, g in c["glosses"].items():
-                lines.append(f"  gloss[{t}]: {g}")
+
+    for key, card in kb.get("indicators", {}).items():
+        lines.append(
+            f"\n[{key}] {card.get('label', key)} "
+            f"({card.get('plain_name', '')}) — "
+            f"event: {card.get('event', '')}, "
+            f"unit: {card.get('unit', '')}"
+        )
+
+        if card.get("measures"):
+            lines.append(f"  measures: {card['measures']}")
+
+        if card.get("beginner_explanation"):
+            lines.append(
+                f"  beginner_explanation: {card['beginner_explanation']}"
+            )
+
+        if card.get("why"):
+            lines.append(f"  why: {card['why']}")
+
+        if card.get("handedness_note"):
+            lines.append(
+                f"  handedness_note: {card['handedness_note']}"
+            )
+
+        evidence = card.get("evidence_classification", {})
+        if evidence:
+            if evidence.get("directly_measured"):
+                lines.append(
+                    "  directly_measured: "
+                    f"{evidence['directly_measured']}"
+                )
+
+            if evidence.get("derived_comparison"):
+                lines.append(
+                    "  derived_comparison: "
+                    f"{evidence['derived_comparison']}"
+                )
+
+            if evidence.get("not_supported"):
+                lines.append(
+                    "  not_supported: "
+                    f"{evidence['not_supported']}"
+                )
+
+        if card.get("in_range_phrasing"):
+            lines.append(
+                f"  in_range: {card['in_range_phrasing']}"
+            )
+
+        if card.get("out_low_phrasing"):
+            lines.append(
+                f"  if_below_range: {card['out_low_phrasing']}"
+            )
+
+        if card.get("out_high_phrasing"):
+            lines.append(
+                f"  if_above_range: {card['out_high_phrasing']}"
+            )
+
+        comparison_language = card.get("comparison_language", [])
+        if comparison_language:
+            lines.append("  approved_comparison_language:")
+
+            for statement in comparison_language:
+                lines.append(f"    - {statement}")
+
+        limitations = card.get("limitations", [])
+        if limitations:
+            lines.append("  limitations:")
+
+            for limitation in limitations:
+                lines.append(f"    - {limitation}")
+
+        allowed_inferences = card.get("allowed_inferences", [])
+        if allowed_inferences:
+            lines.append("  allowed_inferences:")
+
+            for inference in allowed_inferences:
+                lines.append(f"    - {inference}")
+
+        prohibited_inferences = card.get("prohibited_inferences", [])
+        if prohibited_inferences:
+            lines.append("  prohibited_inferences:")
+
+            for inference in prohibited_inferences:
+                lines.append(f"    - {inference}")
+
+        if card.get("glosses"):
+            for term, gloss in card["glosses"].items():
+                lines.append(f"  gloss[{term}]: {gloss}")
+
     return "\n".join(lines)
 
 
