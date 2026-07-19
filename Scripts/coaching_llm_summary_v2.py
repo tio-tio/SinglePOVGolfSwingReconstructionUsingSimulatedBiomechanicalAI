@@ -36,6 +36,8 @@ import shutil
 import subprocess
 import threading
 from pathlib import Path
+from coaching_persona import DEFAULT_PERSONA, load_persona
+
 
 PROJECT_ROOT = Path(__file__).parent.parent
 KB_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_kb.json"
@@ -347,7 +349,21 @@ def call_codex(prompt: str, image: str | None = None, model: str | None = None,
 
 
 def _run_codex(sc: dict, kb: dict, image: str | None, model: str | None) -> tuple[dict, dict]:
-    prompt = RULES + "\n\n" + build_kb_block(kb) + "\n\n" + build_scorecard_text(sc)
+    # Replaced the original prompt assembly to include the selected coaching persona.
+    # prompt = RULES + "\n\n" + build_kb_block(kb) + "\n\n" + build_scorecard_text(sc)
+
+    persona_block = load_persona(DEFAULT_PERSONA)
+
+    prompt = (
+        RULES
+        + "\n\n"
+        + persona_block
+        + "\n\n"
+        + build_kb_block(kb)
+        + "\n\n"
+        + build_scorecard_text(sc)
+        )
+
     if image:
         prompt += ("\n\n(An image of the SAME swing is attached for visual context "
                    "only. Never let it override or contradict the measured metrics.)")
@@ -362,12 +378,21 @@ def _run_codex(sc: dict, kb: dict, image: str | None, model: str | None) -> tupl
 
 def _run_anthropic(sc: dict, kb: dict, image: str | None, model: str,
                    thinking: bool) -> tuple[dict, dict]:
+    
     import anthropic
+
+    persona_block = load_persona(DEFAULT_PERSONA)
 
     system = [
         {"type": "text", "text": RULES},
-        {"type": "text", "text": build_kb_block(kb), "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": persona_block},
+        {
+            "type": "text",
+            "text": build_kb_block(kb),
+            "cache_control": {"type": "ephemeral"},
+        },
     ]
+
     content: list[dict] = []
     if image:
         data = Path(image).read_bytes()
