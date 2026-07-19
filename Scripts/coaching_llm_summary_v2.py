@@ -36,11 +36,12 @@ import shutil
 import subprocess
 import threading
 from pathlib import Path
-from coaching_persona import DEFAULT_PERSONA, load_persona
 
 
 PROJECT_ROOT = Path(__file__).parent.parent
 KB_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_kb.json"
+PERSONAS_DIR = PROJECT_ROOT / "Data" / "coaching" / "personas"
+DEFAULT_PERSONA = "traditional"
 CODEX_BIN = shutil.which("codex.cmd") or shutil.which("codex") or "codex"
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 
@@ -112,6 +113,23 @@ OUTPUT_SCHEMA = {
 def load_kb() -> dict:
     return json.loads(KB_PATH.read_text(encoding="utf-8"))
 
+def load_persona(persona_name: str = DEFAULT_PERSONA) -> str:
+    """Load a coaching persona by its safe file name."""
+    safe_name = Path(persona_name).stem
+
+    if safe_name != persona_name:
+        raise ValueError(f"Invalid persona name: {persona_name}")
+
+    persona_path = PERSONAS_DIR / f"{safe_name}.md"
+
+    if not persona_path.exists():
+        available = sorted(path.stem for path in PERSONAS_DIR.glob("*.md"))
+        raise FileNotFoundError(
+            f"Persona '{persona_name}' was not found. "
+            f"Available personas: {', '.join(available)}"
+        )
+
+    return persona_path.read_text(encoding="utf-8").strip()
 
 def build_kb_block(kb: dict) -> str:
     """Build the stable knowledge-base prompt sent to the LLM.
@@ -348,27 +366,27 @@ def call_codex(prompt: str, image: str | None = None, model: str | None = None,
                 pass
 
 
-def _run_codex(sc: dict, kb: dict, image: str | None, model: str | None) -> tuple[dict, dict]:
+def _run_codex(sc: dict, kb: dict, image: str | None, model: str | None, persona_name: str,) -> tuple[dict, dict]:
     # Replaced the original prompt assembly to include the selected coaching persona.
     # prompt = RULES + "\n\n" + build_kb_block(kb) + "\n\n" + build_scorecard_text(sc)
 
-    persona_block = load_persona(DEFAULT_PERSONA)
+    persona = load_persona(persona_name)
 
     prompt = (
         RULES
-        + "\n\n"
-        + persona_block
+        + "\n\nPERSONA AND COMMUNICATION STYLE:\n"
+        + persona
         + "\n\n"
         + build_kb_block(kb)
         + "\n\n"
         + build_scorecard_text(sc)
-        )
+    )
 
     if image:
         prompt += ("\n\n(An image of the SAME swing is attached for visual context "
                    "only. Never let it override or contradict the measured metrics.)")
     out = call_codex(prompt, image=image, model=model)
-    meta = {"backend": "codex", "model": model or "codex-default", "multimodal": bool(image)}
+    meta = {"backend": "codex", "model": model or "codex-default", "multimodal": bool(image), "persona": persona_name,}
     return out, meta
 
 
@@ -377,15 +395,18 @@ def _run_codex(sc: dict, kb: dict, image: str | None, model: str | None) -> tupl
 # --------------------------------------------------------------------------- #
 
 def _run_anthropic(sc: dict, kb: dict, image: str | None, model: str,
-                   thinking: bool) -> tuple[dict, dict]:
+                   thinking: bool, persona_name: str,) -> tuple[dict, dict]:
     
     import anthropic
 
-    persona_block = load_persona(DEFAULT_PERSONA)
+    persona = load_persona(persona_name)
 
     system = [
         {"type": "text", "text": RULES},
-        {"type": "text", "text": persona_block},
+        {
+            "type": "text",
+            "text": "PERSONA AND COMMUNICATION STYLE:\n" + persona,
+        },
         {
             "type": "text",
             "text": build_kb_block(kb),
@@ -411,7 +432,7 @@ def _run_anthropic(sc: dict, kb: dict, image: str | None, model: str,
         kwargs["thinking"] = {"type": "adaptive"}
     msg = anthropic.Anthropic().messages.create(**kwargs)
     out = _coerce_json(next(b.text for b in msg.content if b.type == "text"))
-    meta = {"backend": "anthropic", "model": msg.model, "multimodal": bool(image),
+    meta = {"backend": "anthropic", "model": msg.model, "multimodal": bool(image), "persona": persona_name,
             "usage": {"input_tokens": msg.usage.input_tokens,
                       "output_tokens": msg.usage.output_tokens,
                       "cache_read_input_tokens": getattr(msg.usage, "cache_read_input_tokens", 0),
@@ -424,13 +445,13 @@ def _run_anthropic(sc: dict, kb: dict, image: str | None, model: str,
 # --------------------------------------------------------------------------- #
 
 def summarize(scorecard_json: Path, backend: str = "codex", model: str | None = None,
-              image: str | None = None, thinking: bool = True) -> dict:
+              image: str | None = None, thinking: bool = True, persona_name: str = DEFAULT_PERSONA,) -> dict:
     sc = json.loads(Path(scorecard_json).read_text(encoding="utf-8"))
     kb = load_kb()
     if backend == "anthropic":
-        out, meta = _run_anthropic(sc, kb, image, model or DEFAULT_ANTHROPIC_MODEL, thinking)
+        out, meta = _run_anthropic(sc, kb, image, model or DEFAULT_ANTHROPIC_MODEL, thinking, persona_name,)
     else:
-        out, meta = _run_codex(sc, kb, image, model)
+        out, meta = _run_codex(sc, kb, image, model, persona_name,)
 
     grounding = verify_grounding(sc, out.get("claims", []))
     sc["llm_summary_v2"] = out["explanation"]
@@ -448,21 +469,29 @@ if __name__ == "__main__":
     p.add_argument("--model", default=None, help="Override model (codex: -c model=...; anthropic: model id)")
     p.add_argument("--image", default=None, help="Optional scorecard PNG / swing frame for multimodal context")
     p.add_argument("--no-thinking", action="store_true", help="Anthropic backend: disable adaptive thinking")
-    p.add_argument("--dry-run", action="store_true",
-                   help="Assemble + print the prompt and schema; no model call")
+    p.add_argument("--dry-run", action="store_true", help="Assemble + print the prompt and schema; no model call")
+    p.add_argument("--persona",  default=DEFAULT_PERSONA,
+    help=(
+        "Persona filename without .md, such as traditional. "
+        f"Default: {DEFAULT_PERSONA}"
+        ),
+    )
     args = p.parse_args()
+    
 
     if args.dry_run:
         sc = json.loads(Path(args.scorecard).read_text(encoding="utf-8"))
         kb = load_kb()
+        persona = load_persona(args.persona)
         print("=" * 70, "\nRULES:\n", RULES[:500], "...")
+        print("=" * 70, "\nPERSONA:\n", persona[:1200], "...",)
         print("=" * 70, "\nKB BLOCK (head):\n", build_kb_block(kb)[:800], "...")
         print("=" * 70, "\nSCORECARD TEXT:\n", build_scorecard_text(sc))
         print("=" * 70, "\nOUTPUT SCHEMA:\n", json.dumps(OUTPUT_SCHEMA, indent=2))
         raise SystemExit(0)
 
     sc = summarize(Path(args.scorecard), backend=args.backend, model=args.model,
-                   image=args.image, thinking=not args.no_thinking)
+                   image=args.image, thinking=not args.no_thinking, persona_name=args.persona,)
     print("\n" + "=" * 60 + f"\nLLM SWING EXPLANATION (KB-grounded, {sc['llm_meta']['backend']})\n" + "=" * 60)
     print(sc["llm_summary_v2"])
     g = sc["llm_grounding"]
