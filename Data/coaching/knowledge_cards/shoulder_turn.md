@@ -1,4 +1,3 @@
-```markdown
 # Shoulder Turn at the Top
 
 ## Metadata
@@ -126,4 +125,3 @@ The available camera view was not reliable enough to assess shoulder turn confid
 - “This is the perfect amount of shoulder turn.”
 - “Your strong shoulder turn created more power.”
 - “Your shoulder turn caused the ball to slice.”
-```
