@@ -11,15 +11,17 @@
 /* ---- data access: a processed job's bundle (same shape as demo assets) ---- */
 async function loadJobBundle(jobId) {
   const base = `${window.RESULTS_BASE}/${jobId}`;
-  const [metrics, explanation, replay, scorecard] = await Promise.all([
+  const [metrics, explanation, replay, scorecard, ball] = await Promise.all([
     fetch(`${base}/metrics.json`).then(r => r.json()),
     fetch(`${base}/explanation.json`).then(r => r.json()),
     fetch(`${base}/replay_3d.json`).then(r => r.json()),
     // full scorecard (published since image v10) — carries the hand-speed
     // indicator the ball-flight card nudges by; absent on older jobs
     fetch(`${base}/scorecard.json`).then(r => r.json()).catch(() => null),
+    // measured ball track + flight fit (image v12+) — absent on older jobs
+    fetch(`${base}/ball_3d.json`).then(r => r.ok ? r.json() : null).catch(() => null),
   ]);
-  return { metrics, explanation, replay, scorecard, overlayUrl: `${base}/overlay.mp4` };
+  return { metrics, explanation, replay, scorecard, ball, overlayUrl: `${base}/overlay.mp4` };
 }
 
 /* ================= swing library (persistent, this browser) ===============
@@ -400,7 +402,8 @@ function renderResults() {
   if (window.BallFlight) {
     const hs = ((state.bundle.scorecard || {}).indicators || {}).hand_speed_impact_bs;
     BallFlight.mount({ club: null, tier: "amateur", metricsRows: metrics.metrics,
-                       handSpeed: hs ? { value: hs.value, median: hs.pro_median } : null });
+                       handSpeed: hs ? { value: hs.value, median: hs.pro_median } : null,
+                       ball: state.bundle.ball });
   }
 
   renderPlain(explanation);

@@ -17,12 +17,15 @@ async function loadClipBundle(clipId, jobBase = null) {
   // jobBase: absolute prefix for a processed upload (`${RESULTS_BASE}/<job_id>`);
   // the pipeline writes the same four files + videos as the baked demo assets.
   const base = jobBase || `assets/${clipId}`;
-  const [metrics, explanation, replay] = await Promise.all([
+  const [metrics, explanation, replay, ball] = await Promise.all([
     fetch(`${base}/metrics.json`).then(r => r.json()),
     fetch(`${base}/explanation.json`).then(r => r.json()),
     fetch(`${base}/replay_3d.json`).then(r => r.json()),
+    // measured ball track + flight fit — absent for demo clips / older jobs
+    fetch(`${base}/ball_3d.json`).then(r => r.ok ? r.json() : null).catch(() => null),
   ]);
-  return { metrics, explanation, replay, overlayUrl: `${base}/overlay.mp4`, rawUrl: `${base}/raw.mp4` };
+  return { metrics, explanation, replay, ball,
+           overlayUrl: `${base}/overlay.mp4`, rawUrl: `${base}/raw.mp4` };
 }
 
 /* ================= swing library (persistent, this browser) =============== */
@@ -441,7 +444,8 @@ function renderResults() {
       BallFlight.mount({ club: isJob ? null : clip.club,
                          tier: isJob ? "amateur" : "tour",
                          metricsRows: metrics.metrics,
-                         handSpeed: hs ? { value: hs.value, median: hs.pro_median } : null });
+                         handSpeed: hs ? { value: hs.value, median: hs.pro_median } : null,
+                         ball: state.bundle.ball });
     }
   }
 

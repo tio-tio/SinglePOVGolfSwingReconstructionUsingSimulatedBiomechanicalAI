@@ -23,6 +23,8 @@
 </head>
 <body>
 
+<canvas id="hills-canvas" aria-hidden="true"></canvas>
+
 <header class="topbar">
   <a class="brand" id="btn-home" href="./" title="Back to home" aria-label="MotionCaddie — back to home">
     <img class="brand-logo" src="assets/logo.png" alt="">
@@ -126,6 +128,8 @@
         <button id="btn-listen" class="btn-ghost small" type="button" hidden
           title="Hear this feedback read by the coach">🔊 Listen</button>
         <button id="btn-share" class="btn-ghost small" type="button" title="Copy a link to this result">Share link</button>
+        <button id="btn-dl-overlay" class="btn-ghost small" type="button"
+          title="Save the pose-overlay video (with the tracked ball) as an MP4 you can share anywhere">⬇ Download overlay</button>
       </div>
     </div>
     <div class="view-toggle" role="tablist">
@@ -282,11 +286,12 @@
   </div>
 </div>
 
+<script src="hills.js?v=20260718b"></script>
 <script type="module" src="replay3d.js?v=20260718a"></script>
 <script src="config.js?v=20260717b"></script>
 <script src="auth.js?v=20260717b"></script>
 <script src="chat.js?v=20260718a"></script>
-<script src="ballflight.js?v=20260718c"></script>
-<script src="portal.js?v=20260718c"></script>
+<script src="ballflight.js?v=20260718d"></script>
+<script src="portal.js?v=20260718d"></script>
 </body>
 </html>

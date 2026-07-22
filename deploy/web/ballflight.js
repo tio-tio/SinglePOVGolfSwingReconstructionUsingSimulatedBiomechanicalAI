@@ -189,7 +189,33 @@ const BallFlight = (() => {
 
   let mounted = null;   // avoid duplicate cards on re-render
 
-  /* opts: { aside: ".results-media", club, tier, metricsRows, sourceLabel } */
+  /* measured panel (ball_3d.json quality measured/partial) — the real numbers
+   * from tracking the ball in THIS video; the simulator demotes to a what-if. */
+  function measuredHTML(ball) {
+    const q = ball.quality, fit = ball.fit || {}, fl = ball.flight || {};
+    const az = fit.azimuth_deg || 0;
+    const dir = az > 3 ? `${Math.abs(az).toFixed(0)}° right`
+      : az < -3 ? `${Math.abs(az).toFixed(0)}° left` : "straight";
+    const ci = (ball.ci_10_90 || {}).carry_yd;
+    const carry = q === "measured"
+      ? `<strong>${fl.carry_yd} yd carry</strong>${ci ? ` <span class="muted small">(${Math.round(ci[0])}–${Math.round(ci[1])})</span>` : ""}`
+      : `<strong>≈${fl.carry_yd} yd carry</strong> <span class="muted small">(estimated)</span>`;
+    const speed = q === "measured"
+      ? `${fit.ball_speed_mph} mph ball speed` : `ball speed assumed (${fit.ball_speed_mph} mph)`;
+    return `
+      <div id="bf-measured" style="margin:4px 0 8px">
+        <div id="bf-measured-arc" style="opacity:.9"></div>
+        <p class="small" style="margin:6px 0 2px">${carry} · apex ${fl.apex_yd} yd · ${fl.flight_time_s} s</p>
+        <p class="small" style="margin:2px 0 2px">Launch <strong>${fit.launch_deg}°</strong> ·
+          started <strong>${dir}</strong> of the camera line · ${speed}</p>
+        <p class="muted small" style="margin:2px 0 0">${q === "measured"
+          ? `Measured from the ball tracked in your video (${ball.n_track_points} frames), fitted with the physics model.`
+          : `Launch angle + direction measured from the ball tracked in your video (${ball.n_track_points} frames); distance simulated from that launch with club-typical speed.`}</p>
+      </div>`;
+  }
+
+  /* opts: { aside: ".results-media", club, tier, metricsRows, sourceLabel,
+   *         ball: parsed ball_3d.json | null } */
   function mount(opts) {
     const aside = document.querySelector(opts.aside || ".results-media");
     if (!aside) return;
@@ -197,13 +223,19 @@ const BallFlight = (() => {
     const card = document.createElement("div");
     card.className = "card media-card";
     card.id = "ballflight-card";
+    const ball = opts.ball && ["measured", "partial"].includes(opts.ball.quality) ? opts.ball : null;
     const clubOpts = Object.keys(CLUBS).map(c =>
       `<option value="${c}"${c === (normClub(opts.club) || "driver") ? " selected" : ""}>${c}</option>`).join("");
     const tiers = [["tour", "Tour (PGA)"], ["lpga", "Tour (LPGA)"], ["amateur", "Amateur"]];
     const tierOpts = tiers.map(([v, l]) =>
       `<option value="${v}"${v === (opts.tier || "amateur") ? " selected" : ""}>${l}</option>`).join("");
+    const badge = ball
+      ? (ball.quality === "measured" ? "— measured from your video" : "— measured launch")
+      : "— simulated";
     card.innerHTML = `
-      <h3>Ball flight <span class="muted small">— simulated</span></h3>
+      <h3>Ball flight <span class="muted small">${badge}</span></h3>
+      ${ball ? measuredHTML(ball) : ""}
+      ${ball ? `<p class="muted small" style="margin:8px 0 2px;border-top:1px solid rgba(127,127,127,.25);padding-top:6px">What-if simulator</p>` : ""}
       <div class="bf-controls" style="display:flex;gap:8px;margin:6px 0 8px;flex-wrap:wrap">
         <label class="small muted">Club <select id="bf-club">${clubOpts}</select></label>
         <label class="small muted">Launch like <select id="bf-tier">${tierOpts}</select></label>
@@ -213,6 +245,11 @@ const BallFlight = (() => {
       <p id="bf-note" class="muted small" style="margin:2px 0 0"></p>`;
     aside.appendChild(card);
     mounted = card;
+    if (ball && Array.isArray(ball.trajectory_world) && ball.trajectory_world.length > 2) {
+      const traj = ball.trajectory_world.map(p => [p[0], p[1]]);
+      card.querySelector("#bf-measured-arc").innerHTML =
+        arcSVG(traj, ball.flight.carry_yd, ball.flight.apex_yd);
+    }
 
     const render = async () => {
       const club = card.querySelector("#bf-club").value;
