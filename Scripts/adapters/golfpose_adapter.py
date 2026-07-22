@@ -106,7 +106,7 @@ class GolfPose3DAdapter(BaseAdapter):
     # Input loading: pull cached upstream 2D, normalize to GolfPose schema
     # ---------------------------------------------------------------------
 
-    def _load_upstream_xy(self, clip_id: int, video_path: Path) -> Optional[np.ndarray]:
+    def _load_upstream_xy(self, clip_id: str, video_path: Path) -> Optional[np.ndarray]:
         """Load cached 2D landmarks from upstream model. Returns (T, 17, 2)
         in pixel coords, or None if not cached."""
         p = self.upstream_2d_cache_dir / self.upstream_2d_model / f"{clip_id}.parquet"
@@ -197,7 +197,7 @@ class GolfPose3DAdapter(BaseAdapter):
         upstream input."""
         from eval_utils import video_info
         info = video_info(video_path)
-        clip_id = int(Path(video_path).stem)
+        clip_id = Path(video_path).stem
         xy_px = self._load_upstream_xy(clip_id, Path(video_path))
         if xy_px is None:
             raise FileNotFoundError(

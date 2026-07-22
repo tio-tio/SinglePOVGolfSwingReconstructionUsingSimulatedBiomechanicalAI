@@ -56,8 +56,35 @@ def _mean_acceleration(xyz: np.ndarray) -> float:
 
 def _load_3d_conf_as_h36m(parquet_3d: Path, n_frames: int) -> np.ndarray | None:
     """Read the conf column from a 3D parquet and project to H36M-17 ordering.
-    Returns (T, 17) or None if the parquet has no conf column."""
+    Returns (T, 17) or None if the parquet has no conf column.
+
+    NOTE: for every lifter adapter in this repo, this column is a near-
+    constant per-joint mask (1.0 for body joints, 0.0 for the handful of
+    face keypoints H36M-17 doesn't even have), not a real per-frame
+    detection-quality signal - the lifters don't estimate their own
+    uncertainty. It's kept for compatibility with any future lifter that
+    does emit real confidence; production smoothing should use
+    `_load_2d_conf_as_h36m` instead (see `main()`), which reads the
+    upstream 2D backbone's actual per-frame confidence."""
     df = pd.read_parquet(parquet_3d)
+    if "conf" not in df.columns:
+        return None
+    conf_coco = np.zeros((n_frames, 17, 1), dtype=np.float32)
+    for row in df.itertuples(index=False):
+        conf_coco[int(row.frame), int(row.kp_idx), 0] = float(row.conf)
+    return coco17_to_h36m17(conf_coco)[..., 0]
+
+
+def _load_2d_conf_as_h36m(parquet_2d: Path, n_frames: int) -> np.ndarray | None:
+    """Read the conf column from the upstream 2D parquet and project to
+    H36M-17 ordering. Returns (T, 17) or None if missing a conf column.
+
+    This is the confidence signal that's actually meaningful: the 2D
+    backbone (mediapipe/vitpose/etc) genuinely loses track under fast
+    motion and self-occlusion, and says so via this column. The 3D lifter's
+    own `conf` output does not (see `_load_3d_conf_as_h36m`), so gap
+    detection for `smooth_sequence` should be driven by this, not that."""
+    df = pd.read_parquet(parquet_2d)
     if "conf" not in df.columns:
         return None
     conf_coco = np.zeros((n_frames, 17, 1), dtype=np.float32)
@@ -154,7 +181,7 @@ def write_2d_overlay(video_path: Path, landmarks_2d_parquet: Path, out_mp4: Path
             return
         except Exception as e:
             print(f"  [overlay] ffmpeg failed: {e}; keeping mp4v")
-    tmp.rename(out_mp4)
+    tmp.replace(out_mp4)
 
 
 # ---------------------------------------------------------------------------
@@ -303,10 +330,68 @@ def main():
                    help="Savgol window length (odd; clamped to clip length)")
     p.add_argument("--no-bone-lock", action="store_true",
                    help="Disable bone-length stabilization (rigid skeleton pass)")
+    p.add_argument("--no-angle-lock", action="store_true",
+                   help="Disable joint-angle-limit correction (undoes anatomically impossible elbow/knee flexion)")
+    p.add_argument("--min-hinge-angle", type=float, default=15.0,
+                   help="Angle-lock: minimum elbow/knee interior angle in degrees (default: 15)")
+    p.add_argument("--no-lead-arm-lock", action="store_true",
+                   help="Disable the lead-arm straightness lock (keeps the left/lead elbow - "
+                        "right-handed golfer convention - close to straight throughout the "
+                        "clip, a tighter floor than the general anatomical angle-lock)")
+    p.add_argument("--lead-arm-min-angle", type=float, default=155.0,
+                   help="Lead-arm-lock: minimum lead-elbow interior angle in degrees (default: 155)")
     p.add_argument("--no-grip-lock", action="store_true",
                    help="Disable grip stabilization (clamps wrist-to-wrist distance to a plausible grip width)")
     p.add_argument("--max-hand-distance", type=float, default=0.12,
                    help="Grip-lock: max plausible wrist-to-wrist distance in metres (default: 0.12)")
+    p.add_argument("--no-plane-lock", action="store_true",
+                   help="Disable swing-plane consistency (pulls the grip point back onto its own best-fit arc)")
+    p.add_argument("--max-offplane", type=float, default=0.08,
+                   help="Plane-lock: max plausible grip-point distance from the swing plane in metres (default: 0.08)")
+    p.add_argument("--no-torso-lock", action="store_true",
+                   help="Disable torso-clearance (pushes a wrist/elbow out of the torso mesh volume)")
+    p.add_argument("--min-torso-clearance", type=float, default=0.12,
+                   help="Torso-lock: min wrist/elbow distance from the spine axis in metres (default: 0.12)")
+    p.add_argument("--angular-gap-fill", action="store_true",
+                   help="Re-fill low-confidence arm-joint gaps by angular momentum around the "
+                        "shoulder instead of leaving step 1's straight-line fill (or nothing, for "
+                        "gaps at a clip boundary); default: off, opt in per clip")
+    p.add_argument("--max-extrapolate", type=int, default=90,
+                   help="Angular gap-fill: max frames of pure extrapolation trusted at a clip boundary (default: 90)")
+    p.add_argument("--lead-factor", type=float, default=1.0,
+                   help="Angular gap-fill: floor the wrist's imputed angular velocity at this "
+                        "multiple of its elbow's own (already-reconstructed) rate, so the hand "
+                        "never reads as trailing the arm during a filled gap (default: 1.0)")
+    p.add_argument("--min-conf", type=float, default=0.5,
+                   help="Confidence floor below which a frame counts as a gap for interpolate_gaps/"
+                        "angular gap-fill (default: 0.5)")
+    p.add_argument("--no-deceleration-lock", action="store_true",
+                   help="Disable follow-through spike suppression (clamps isolated grip-point "
+                        "speed spikes relative to their local neighbourhood, without "
+                        "flattening real multi-frame events like the wrist-release whip)")
+    p.add_argument("--spike-window", type=int, default=5,
+                   help="Deceleration-lock: number of neighbouring frames (centered) used "
+                        "to judge whether a frame's speed is a local outlier (default: 5)")
+    p.add_argument("--spike-k", type=float, default=3.5,
+                   help="Deceleration-lock: outlier threshold in scaled MADs above the "
+                        "local median speed (default: 3.5)")
+    p.add_argument("--min-speed-mad", type=float, default=0.01,
+                   help="Deceleration-lock: floor on the local MAD in metres, so a near-"
+                        "still neighbourhood doesn't flag ordinary small speeds (default: 0.01)")
+    p.add_argument("--no-arm-freeze", action="store_true",
+                   help="Disable arm-pose freezing during proven-still holds (freezes the "
+                        "arms to a single pose wherever the torso proves they should be "
+                        "still - hands winging around when the body isn't moving - without "
+                        "touching forearm length; only ever applies after the swing's own "
+                        "impact frame)")
+    p.add_argument("--arm-freeze-still-speed", type=float, default=0.008,
+                   help="Arm-freeze: shoulder-midpoint speed (m/frame) below which the torso "
+                        "counts as still (default: 0.008)")
+    p.add_argument("--arm-freeze-min-hold-frames", type=int, default=5,
+                   help="Arm-freeze: minimum consecutive still frames to count as a real "
+                        "hold, not torso noise (default: 5)")
+    p.add_argument("--arm-freeze-blend-frames", type=int, default=5,
+                   help="Arm-freeze: crossfade length in/out of a hold, in frames (default: 5)")
     args = p.parse_args()
 
     video_path = Path(args.video).resolve()
@@ -344,22 +429,57 @@ def main():
           f"range [{xyz_h36m.min():.3f}, {xyz_h36m.max():.3f}]")
 
     # --- 2b. Smoothing (de-jitter the 3D trajectory) ---
-    if args.smooth != "none" or not args.no_bone_lock or not args.no_grip_lock:
-        conf_h36m = _load_3d_conf_as_h36m(parquet_3d, xyz_h36m.shape[0])
+    if (args.smooth != "none" or not args.no_bone_lock or not args.no_angle_lock
+            or not args.no_grip_lock or not args.no_plane_lock or not args.no_torso_lock
+            or not args.no_deceleration_lock or not args.no_arm_freeze
+            or args.angular_gap_fill):
+        # Use the 2D backbone's confidence, not the 3D lifter's (see
+        # _load_3d_conf_as_h36m's docstring: the lifter's own conf column is
+        # an uninformative near-constant mask, not a real detection signal).
+        conf_h36m = _load_2d_conf_as_h36m(parquet_2d, xyz_h36m.shape[0])
         jitter_before = _mean_acceleration(xyz_h36m)
         xyz_h36m = smooth_sequence(
             xyz_h36m, conf=conf_h36m, method=args.smooth, fps=fps,
+            angular_gap_fill=args.angular_gap_fill,
             bone_lock=not args.no_bone_lock,
+            angle_lock=not args.no_angle_lock,
             grip_lock=not args.no_grip_lock,
+            plane_lock=not args.no_plane_lock,
+            torso_lock=not args.no_torso_lock,
+            deceleration_lock=not args.no_deceleration_lock,
+            min_conf=args.min_conf,
             min_cutoff=args.smooth_min_cutoff, beta=args.smooth_beta,
             window=args.smooth_window,
+            max_extrapolate=args.max_extrapolate,
+            lead_factor=args.lead_factor,
+            min_hinge_angle=args.min_hinge_angle,
             max_hand_distance=args.max_hand_distance,
+            max_offplane=args.max_offplane,
+            min_torso_clearance=args.min_torso_clearance,
+            spike_window=args.spike_window,
+            spike_k=args.spike_k,
+            min_speed_mad=args.min_speed_mad,
+            arm_freeze=not args.no_arm_freeze,
+            arm_freeze_still_speed=args.arm_freeze_still_speed,
+            arm_freeze_min_hold_frames=args.arm_freeze_min_hold_frames,
+            arm_freeze_blend_frames=args.arm_freeze_blend_frames,
+            lead_arm_lock=not args.no_lead_arm_lock,
+            lead_arm_min_angle=args.lead_arm_min_angle,
         )
         jitter_after = _mean_acceleration(xyz_h36m)
         bone = "off" if args.no_bone_lock else "on"
+        angle = "off" if args.no_angle_lock else "on"
+        lead_arm = "off" if args.no_lead_arm_lock else "on"
         grip = "off" if args.no_grip_lock else "on"
+        plane = "off" if args.no_plane_lock else "on"
+        torso = "off" if args.no_torso_lock else "on"
+        decel = "off" if args.no_deceleration_lock else "on"
+        freeze = "off" if args.no_arm_freeze else "on"
+        angular = "on" if args.angular_gap_fill else "off"
         pct = (1.0 - jitter_after / jitter_before) * 100.0 if jitter_before else 0.0
-        print(f"[pipeline] smoothing: {args.smooth} (bone-lock {bone}, grip-lock {grip})  "
+        print(f"[pipeline] smoothing: {args.smooth} (angular-gap-fill {angular}, bone-lock {bone}, "
+              f"angle-lock {angle}, lead-arm-lock {lead_arm}, grip-lock {grip}, plane-lock {plane}, "
+              f"torso-lock {torso}, decel-lock {decel}, arm-freeze {freeze})  "
               f"jitter {jitter_before:.5f} -> {jitter_after:.5f}  ({pct:+.1f}%)")
 
     # --- 3. 3D exports (CSV + canonical JSON; BVH is opt-in) ---

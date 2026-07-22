@@ -123,7 +123,7 @@ class MotionBERTAdapter(BaseAdapter):
     # 2D input loading
     # ---------------------------------------------------------------------
 
-    def _load_upstream_xy(self, clip_id: int) -> Optional[np.ndarray]:
+    def _load_upstream_xy(self, clip_id: str) -> Optional[np.ndarray]:
         p = self.upstream_2d_cache_dir / self.upstream_2d_model / f"{clip_id}.parquet"
         if not p.exists():
             return None
@@ -193,7 +193,7 @@ class MotionBERTAdapter(BaseAdapter):
     def predict(self, video_path) -> InferenceResult:
         from eval_utils import video_info
         info = video_info(video_path)
-        clip_id = int(Path(video_path).stem)
+        clip_id = Path(video_path).stem
         xy_coco_px = self._load_upstream_xy(clip_id)
         if xy_coco_px is None:
             raise FileNotFoundError(
