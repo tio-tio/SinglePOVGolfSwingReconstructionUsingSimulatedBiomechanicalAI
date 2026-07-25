@@ -1,255 +1,1407 @@
 {
- "_about": "Coaching knowledge base for the LLM interpretation layer. One vetted explainer card per biomechanical indicator, plus a controlled glossary. The LLM narrates ONLY from these cards/glosses \u2014 it must not invent golf terminology or mechanics from its own knowledge. Cards are intentionally neutral/descriptive (MVP scope: no fix-it advice). Author/review: pending coach sign-off.",
- "_version": "0.1.0",
- "_schema": {
-  "indicator card": {
-   "label": "short friendly label shown to the user",
-   "plain_name": "beginner-friendly name for the metric",
-   "event": "swing phase this relates to",
-   "unit": "unit of the measured value",
-   "measures": "what the number physically measures (one sentence, plain)",
-   "why": "why it matters to a golfer (one sentence, plain, non-prescriptive)",
-   "in_range_phrasing": "approved description when the metric is inside the tour band",
-   "out_low_phrasing": "approved neutral description when below the tour band (null if not noteworthy low)",
-   "out_high_phrasing": "approved neutral description when above the tour band (null if not noteworthy high)",
-   "glosses": "term -> approved short gloss, for any jargon used in this card"
+  "_about": "Grounded coaching knowledge base generated from human-readable Markdown indicator cards. The LLM must describe measured metrics without inventing causes, diagnoses, shot outcomes, or corrections.",
+  "_version": "0.2.0",
+  "_schema": {
+    "indicator card": {
+      "label": "short friendly label shown to the user",
+      "plain_name": "beginner-friendly name for the metric",
+      "event": "swing phase this relates to",
+      "unit": "unit of the measured value",
+      "measures": "what the number physically measures (one sentence, plain)",
+      "why": "why it matters to a golfer (one sentence, plain, non-prescriptive)",
+      "in_range_phrasing": "approved description when the metric is inside the tour band",
+      "out_low_phrasing": "approved neutral description when below the tour band (null if not noteworthy low)",
+      "out_high_phrasing": "approved neutral description when above the tour band (null if not noteworthy high)",
+      "glosses": "term -> approved short gloss, for any jargon used in this card",
+      "beginner_explanation": "plain-language explanation for a beginner",
+      "swing_phase_display": "human-readable swing phase from the Markdown source",
+      "evidence_classification": "directly measured, derived comparison, and unsupported claims",
+      "comparison_language": "approved neutral phrases for comparing two swings",
+      "limitations": "confidence, camera, and interpretation limitations",
+      "allowed_inferences": "claims the LLM may make from this metric",
+      "prohibited_inferences": "claims the LLM must not make from this metric",
+      "approved_examples": "approved response examples grouped by situation",
+      "prohibited_examples": "response examples the LLM must not produce",
+      "handedness_note": "optional handedness limitation for side-specific metrics",
+      "source_file": "Markdown source filename",
+      "source_title": "Markdown source document title"
+    }
+  },
+  "glossary": {
+    "tour range": "the typical spread of values seen across professional tour swings",
+    "tour median": "the middle value among professional tour swings",
+    "address": "the setup position, just before the swing starts",
+    "top": "the top of the backswing, where the club changes direction",
+    "impact": "the instant the club meets the ball",
+    "backswing": "the takeaway and turn back, away from the target",
+    "downswing": "the move from the top of the backswing down to the ball",
+    "percentile": "where this swing sits relative to tour pros — e.g. 30th percentile means 30% of pros are lower",
+    "shoulder turn": "How much the upper body rotates during the backswing.",
+    "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison.",
+    "top of the backswing": "The point where the backswing ends and the downswing begins.",
+    "hip turn": "How much the lower body rotates during the backswing.",
+    "shoulder–hip separation": "The difference between how far the shoulders rotate and how far the hips rotate.",
+    "x-factor": "Another name for shoulder–hip separation at the top of the backswing.",
+    "hip rotation at impact": "How far the hips have turned toward the target when the club reaches the ball.",
+    "open hips": "Hips rotated to face more toward the target.",
+    "spine angle": "How much the upper body leans away from an upright position.",
+    "upper-body lean": "The angle of the torso relative to standing upright.",
+    "posture": "The upper-body and spine angle held during the swing.",
+    "posture change": "The difference in upper-body angle between setup and impact.",
+    "setup": "The golfer’s starting position before the swing begins.",
+    "head sway": "Sideways movement of the head during the swing.",
+    "sideways movement": "Movement across the camera view rather than up or down.",
+    "percent of body height": "A body-size-adjusted way of expressing movement distance.",
+    "head height change": "Upward or downward movement of the head during the swing.",
+    "vertical movement": "Movement up or down in the camera view.",
+    "lead arm": "The arm closer to the target.",
+    "lead-arm extension": "How straight the lead arm appears during the swing.",
+    "arm bend angle": "The measured angle used to describe how bent or straight the arm is.",
+    "trail arm": "The arm farther from the target.",
+    "arm bend": "How much the elbow joint is folded.",
+    "folded arm": "An arm position with more bend at the elbow.",
+    "lead knee": "The knee closer to the target.",
+    "knee flex": "How much the knee joint is bent.",
+    "hip shift": "Sideways movement of the pelvis during the swing.",
+    "toward the target": "Movement in the direction the golfer intends to hit the ball.",
+    "tempo": "The timing relationship between the backswing and downswing.",
+    "tempo ratio": "The backswing duration divided by the downswing duration.",
+    "three-to-one ratio": "A backswing that takes about three times as long as the downswing.",
+    "hand speed": "How quickly the hands travel during the swing.",
+    "impact area": "The part of the swing immediately around the moment the club reaches the ball.",
+    "peak speed": "The highest measured speed during the selected part of the swing.",
+    "body-lengths per second": "A body-size-adjusted speed unit that expresses movement relative to the golfer’s height or scale.",
+    "normalized by body size": "Adjusted relative to the golfer’s body dimensions to support comparison across golfers."
+  },
+  "indicators": {
+    "shoulder_turn_top_deg": {
+      "label": "Shoulder turn",
+      "plain_name": "How far the shoulders rotate at the top",
+      "event": "top",
+      "swing_phase_display": "Top of the backswing",
+      "unit": "degrees",
+      "measures": "Measures how far the shoulders rotated away from the target by the top of the backswing.",
+      "beginner_explanation": "Shoulder turn describes how much the upper body rotated during the backswing.",
+      "why": "This measurement helps describe how the upper body moved during the backswing. It does not determine whether the movement was correct or what caused it.",
+      "in_range_phrasing": "The measured shoulder turn was within the tour reference range at the top of the backswing.",
+      "out_low_phrasing": "The measured shoulder turn was below the tour reference range at the top of the backswing.",
+      "out_high_phrasing": "The measured shoulder turn was above the tour reference range at the top of the backswing.",
+      "glosses": {
+        "shoulder turn": "How much the upper body rotates during the backswing.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison.",
+        "top of the backswing": "The point where the backswing ends and the downswing begins."
+      },
+      "evidence_classification": {
+        "directly_measured": "Shoulder rotation at the top of the backswing, in degrees.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Power production, flexibility, mobility, ball flight, swing quality, injury, or whether the golfer should rotate more or less."
+      },
+      "comparison_language": [
+        "The measured shoulder turn increased compared with the earlier swing.",
+        "The measured shoulder turn decreased compared with the earlier swing.",
+        "The measured shoulder turn was similar in both swings.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It describes measured shoulder rotation but does not determine why the golfer moved this way.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera position, body visibility, pose-estimation quality, and the detected swing phase.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of shoulder rotation.",
+        "State whether the measurement was inside, below, or above the tour reference range.",
+        "Compare reliable shoulder-turn measurements from two swings.",
+        "Explain shoulder turn in beginner-friendly language.",
+        "Describe the movement neutrally.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Say the golfer turned “enough,” “not enough,” “too much,” or “too little.”",
+        "Describe the movement as correct, incorrect, good, bad, ideal, or faulty solely from the reference comparison.",
+        "Diagnose flexibility, mobility, strength, posture, or injury.",
+        "Claim that shoulder turn created or reduced power.",
+        "Claim that shoulder turn caused a slice, hook, poor contact, loss of distance, or another ball-flight result.",
+        "Recommend a drill, correction, target angle, or amount of rotation.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Infer hip turn or shoulder–hip separation unless those separate measurements were also retrieved.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured shoulder turn was within the tour reference range at the top of the backswing. In plain language, your upper body rotated by an amount that fell within the comparison range.",
+        "Below the reference range": "Your measured shoulder turn was below the tour reference range at the top of the backswing. This describes the movement captured in this swing rather than identifying a fault.",
+        "Above the reference range": "Your measured shoulder turn was above the tour reference range at the top of the backswing. That means the upper body rotated farther than the comparison range in this measurement.",
+        "Comparison — increased": "Your measured shoulder turn increased compared with the earlier swing. This describes how the two measured swings differed; it does not by itself mean the current movement was better.",
+        "Comparison — decreased": "Your measured shoulder turn decreased compared with the earlier swing. This shows a change between the two measurements without identifying whether that change was beneficial.",
+        "Low confidence": "The available camera view was not reliable enough to assess shoulder turn confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You did not turn enough.”",
+        "“You rotated too far.”",
+        "“Your limited shoulder turn caused the poor shot.”",
+        "“You need to rotate your shoulders more.”",
+        "“Your shoulder turn shows that your flexibility is limited.”",
+        "“This is the perfect amount of shoulder turn.”",
+        "“Your strong shoulder turn created more power.”",
+        "“Your shoulder turn caused the ball to slice.”"
+      ],
+      "source_file": "shoulder_turn.md",
+      "source_title": "Shoulder Turn at the Top"
+    },
+    "hip_turn_top_deg": {
+      "label": "Hip turn at the top",
+      "plain_name": "How far the hips rotate at the top",
+      "event": "top",
+      "swing_phase_display": "Top of the backswing",
+      "unit": "degrees",
+      "measures": "Measures how far the hips rotated away from the target by the top of the backswing.",
+      "beginner_explanation": "Hip turn describes how much the lower body rotated during the backswing.",
+      "why": "This measurement helps describe how the lower body moved during the backswing. It can also be considered alongside shoulder turn when both measurements are available.",
+      "in_range_phrasing": "The measured hip turn was within the tour reference range at the top of the backswing.",
+      "out_low_phrasing": "The measured hip turn was below the tour reference range at the top of the backswing.",
+      "out_high_phrasing": "The measured hip turn was above the tour reference range at the top of the backswing.",
+      "glosses": {
+        "hip turn": "How much the lower body rotates during the backswing.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison.",
+        "top of the backswing": "The point where the backswing ends and the downswing begins."
+      },
+      "evidence_classification": {
+        "directly_measured": "Hip rotation at the top of the backswing, in degrees.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Power production, flexibility, mobility, balance, ball flight, injury, or whether the golfer should rotate more or less."
+      },
+      "comparison_language": [
+        "The measured hip turn increased compared with the earlier swing.",
+        "The measured hip turn decreased compared with the earlier swing.",
+        "The measured hip turn was similar in both swings.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It describes measured hip rotation but does not determine why the golfer moved this way.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera position, body visibility, pose-estimation quality, and the detected swing phase.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of hip rotation.",
+        "State whether the measurement was inside, below, or above the tour reference range.",
+        "Compare reliable hip-turn measurements from two swings.",
+        "Explain hip turn in beginner-friendly language.",
+        "Describe the movement neutrally.",
+        "Discuss shoulder turn separately when that measurement has also been retrieved.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Say the golfer turned “enough,” “not enough,” “too much,” or “too little.”",
+        "Describe the movement as correct, incorrect, good, bad, ideal, or faulty solely from the reference comparison.",
+        "Claim the hip turn created or reduced power.",
+        "Diagnose flexibility, mobility, strength, balance, posture, or injury.",
+        "Predict ball direction, contact quality, or shot outcome.",
+        "Recommend a drill, correction, target angle, or amount of rotation.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Infer shoulder–hip separation unless x_factor_top_deg was also retrieved.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured hip turn was within the tour reference range at the top of the backswing. In plain language, your lower body rotated by an amount that fell within the comparison range.",
+        "Below the reference range": "Your measured hip turn was below the tour reference range at the top of the backswing. This describes the movement captured in this swing rather than identifying a fault.",
+        "Above the reference range": "Your measured hip turn was above the tour reference range at the top of the backswing. That means the lower body rotated farther than the comparison range in this measurement.",
+        "Comparison — increased": "Your measured hip turn increased compared with the earlier swing. This describes how the two measured swings differed; it does not by itself mean the current movement was better.",
+        "Comparison — decreased": "Your measured hip turn decreased compared with the earlier swing. This shows a change between the two measurements without identifying whether that change was beneficial.",
+        "Low confidence": "The available camera view was not reliable enough to assess hip turn confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You need to turn your hips more.”",
+        "“Your hips did not rotate enough.”",
+        "“You rotated your hips too far.”",
+        "“This cost you power.”",
+        "“Your hip turn caused the ball to slice.”",
+        "“Your flexibility is limiting your turn.”",
+        "“This is the ideal amount of hip turn.”"
+      ],
+      "source_file": "hip_turn_top.md",
+      "source_title": "Hip Turn at the Top"
+    },
+    "x_factor_top_deg": {
+      "label": "Shoulder–hip separation",
+      "plain_name": "The difference between shoulder turn and hip turn at the top",
+      "event": "top",
+      "swing_phase_display": "Top of the backswing",
+      "unit": "degrees",
+      "measures": "Measures the difference between shoulder rotation and hip rotation at the top of the backswing.",
+      "beginner_explanation": "Shoulder–hip separation describes how much farther the shoulders rotated than the hips at the top of the backswing.",
+      "why": "This measurement helps describe the relationship between upper-body rotation and lower-body rotation at the top of the swing. It does not by itself determine power, efficiency, or swing quality.",
+      "in_range_phrasing": "The measured shoulder–hip separation was within the tour reference range at the top of the backswing.",
+      "out_low_phrasing": "The measured shoulder–hip separation was below the tour reference range at the top of the backswing.",
+      "out_high_phrasing": "The measured shoulder–hip separation was above the tour reference range at the top of the backswing.",
+      "glosses": {
+        "shoulder–hip separation": "The difference between how far the shoulders rotate and how far the hips rotate.",
+        "x-factor": "Another name for shoulder–hip separation at the top of the backswing.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison.",
+        "top of the backswing": "The point where the backswing ends and the downswing begins."
+      },
+      "evidence_classification": {
+        "directly_measured": "The difference between shoulder turn and hip turn at the top, in degrees.",
+        "derived_comparison": "Whether the separation value was inside, below, or above the tour reference range.",
+        "not_supported": "Power production, flexibility, mobility, injury risk, ball flight, swing efficiency, or whether the golfer should create more or less separation."
+      },
+      "comparison_language": [
+        "The measured shoulder–hip separation increased compared with the earlier swing.",
+        "The measured shoulder–hip separation decreased compared with the earlier swing.",
+        "The measured shoulder–hip separation was similar in both swings.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a derived motion estimate based on the measured shoulder-turn and hip-turn values.",
+        "Its reliability depends on the reliability of both underlying rotation measurements.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera position, body visibility, pose-estimation quality, and detected swing phase.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured shoulder–hip separation.",
+        "State whether the measurement was inside, below, or above the tour reference range.",
+        "Compare reliable separation values between two swings.",
+        "Explain the term in beginner-friendly language.",
+        "Describe the relationship between shoulder rotation and hip rotation neutrally.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Say the golfer created “enough,” “not enough,” “too much,” or “too little” separation.",
+        "Describe the value as correct, incorrect, good, bad, ideal, or faulty solely from the reference comparison.",
+        "Claim that separation created or reduced power, speed, distance, or consistency.",
+        "Diagnose flexibility, mobility, strength, posture, or injury risk.",
+        "Predict ball direction, contact quality, or shot outcome.",
+        "Recommend a drill, correction, target angle, or amount of separation.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Calculate separation independently from shoulder and hip values when x_factor_top_deg is available.",
+        "Infer shoulder or hip movement details that were not separately retrieved.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured shoulder–hip separation was within the tour reference range at the top of the backswing. In plain language, the difference between your upper-body and lower-body rotation fell within the comparison range.",
+        "Below the reference range": "Your measured shoulder–hip separation was below the tour reference range at the top. This means the difference between shoulder turn and hip turn was smaller than the comparison range in this measurement.",
+        "Above the reference range": "Your measured shoulder–hip separation was above the tour reference range at the top. This means the difference between shoulder turn and hip turn was larger than the comparison range in this measurement.",
+        "Comparison — increased": "Your measured shoulder–hip separation increased compared with the earlier swing. This describes how the two swings differed; it does not by itself mean the current swing was better.",
+        "Comparison — decreased": "Your measured shoulder–hip separation decreased compared with the earlier swing. This shows a change in the relationship between shoulder and hip rotation without judging whether the change was beneficial.",
+        "Low confidence": "The available camera view was not reliable enough to assess shoulder–hip separation confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You need more separation.”",
+        "“Your X-factor is too low.”",
+        "“This separation created more power.”",
+        "“Your hips fired too early.”",
+        "“Your flexibility is limiting your X-factor.”",
+        "“This is the ideal amount of separation.”",
+        "“Your separation caused the ball to slice.”"
+      ],
+      "source_file": "shoulder_hip_separation.md",
+      "source_title": "Shoulder–Hip Separation at the Top"
+    },
+    "hip_turn_impact_deg": {
+      "label": "Hip rotation at impact",
+      "plain_name": "How open the hips are at impact",
+      "event": "impact",
+      "swing_phase_display": "Impact",
+      "unit": "degrees",
+      "measures": "Measures how far the hips rotated toward the target by the moment of impact.",
+      "beginner_explanation": "Hip rotation at impact describes how much the lower body had turned toward the target when the club reached the ball.",
+      "why": "This measurement helps describe the position of the lower body at impact. It does not by itself determine power, contact quality, ball flight, or swing efficiency.",
+      "in_range_phrasing": "The measured hip rotation at impact was within the tour reference range.",
+      "out_low_phrasing": "The measured hip rotation at impact was below the tour reference range.",
+      "out_high_phrasing": "The measured hip rotation at impact was above the tour reference range.",
+      "glosses": {
+        "hip rotation at impact": "How far the hips have turned toward the target when the club reaches the ball.",
+        "open hips": "Hips rotated to face more toward the target.",
+        "impact": "The moment the club meets the ball.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "Hip rotation at the moment of impact, in degrees.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Power production, sequencing quality, club path, clubface position, contact quality, ball flight, injury, or whether the golfer should rotate more or less."
+      },
+      "comparison_language": [
+        "The measured hip rotation at impact increased compared with the earlier swing.",
+        "The measured hip rotation at impact decreased compared with the earlier swing.",
+        "The measured hip rotation at impact was similar in both swings.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It describes the measured hip position at impact but does not determine why the golfer moved this way.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera position, body visibility, pose-estimation quality, and the accuracy of impact detection.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured hip rotation at impact.",
+        "State whether the measurement was inside, below, or above the tour reference range.",
+        "Compare reliable impact-rotation measurements from two swings.",
+        "Explain “open hips” in beginner-friendly language.",
+        "Describe the lower-body position neutrally.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Say the golfer was “open enough,” “not open enough,” “too open,” or “not open.”",
+        "Describe the movement as correct, incorrect, good, bad, ideal, or faulty solely from the reference comparison.",
+        "Claim that hip rotation created or reduced power, speed, distance, or consistency.",
+        "Claim that the hips led or lagged the swing sequence unless a separate sequencing metric supports that conclusion.",
+        "Infer club path, clubface angle, impact quality, launch direction, slice, hook, fade, draw, or another ball-flight result.",
+        "Diagnose flexibility, mobility, strength, posture, or injury.",
+        "Recommend a drill, correction, target angle, or amount of rotation.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured hip rotation at impact was within the tour reference range. In plain language, your hips had turned toward the target by an amount that fell within the comparison range.",
+        "Below the reference range": "Your measured hip rotation at impact was below the tour reference range. This means your hips were less open toward the target than the comparison range in this measurement.",
+        "Above the reference range": "Your measured hip rotation at impact was above the tour reference range. This means your hips were more open toward the target than the comparison range in this measurement.",
+        "Comparison — increased": "Your measured hip rotation at impact increased compared with the earlier swing. This describes a change in lower-body position without by itself showing whether the current swing was better.",
+        "Comparison — decreased": "Your measured hip rotation at impact decreased compared with the earlier swing. This shows how the two measured impact positions differed without judging the change as beneficial or harmful.",
+        "Low confidence": "The available camera view was not reliable enough to assess hip rotation at impact confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You need to clear your hips more.”",
+        "“Your hips were not open enough.”",
+        "“Your hips fired too early.”",
+        "“This hip rotation created more power.”",
+        "“Your closed hips caused the slice.”",
+        "“Your hip rotation shows a sequencing problem.”",
+        "“This is the ideal impact position.”"
+      ],
+      "source_file": "hip_rotation_impact.md",
+      "source_title": "Hip Rotation at Impact"
+    },
+    "spine_tilt_address_deg": {
+      "label": "Spine angle at address",
+      "plain_name": "How much the upper body leans at setup",
+      "event": "address",
+      "swing_phase_display": "Address",
+      "unit": "degrees",
+      "measures": "Measures how far the upper body is tilted away from an upright position at address.",
+      "beginner_explanation": "Spine angle at address describes how much the golfer’s upper body leans at setup before the swing begins.",
+      "why": "This measurement helps describe the golfer’s starting upper-body position. It does not by itself determine setup quality, balance, comfort, swing plane, or whether the golfer should lean more or less.",
+      "in_range_phrasing": "The measured upper-body angle at address was within the tour reference range.",
+      "out_low_phrasing": "The measured upper-body angle at address was below the tour reference range, meaning the golfer began in a more upright position than the comparison range.",
+      "out_high_phrasing": "The measured upper-body angle at address was above the tour reference range, meaning the golfer began with more upper-body lean than the comparison range.",
+      "glosses": {
+        "spine angle": "How much the upper body leans away from an upright position.",
+        "address": "The setup position immediately before the swing begins.",
+        "upper-body lean": "The angle of the torso relative to standing upright.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "Upper-body tilt at address, in degrees.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Setup quality, balance, mobility, comfort, club fit, swing plane, contact quality, ball flight, or whether the golfer should change the angle."
+      },
+      "comparison_language": [
+        "The measured spine angle at address increased compared with the earlier swing.",
+        "The measured spine angle at address decreased compared with the earlier swing.",
+        "The measured setup angle was similar in both swings.",
+        "The current setup was more upright than the earlier setup.",
+        "The current setup had more upper-body lean than the earlier setup.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It depends on reliable detection of the address position and the relevant body joints.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera angle, camera tilt, body visibility, pose-estimation quality, clothing, and stance orientation.",
+        "The metric describes upper-body angle in the available view and may not capture the golfer’s full three-dimensional posture.",
+        "The tour range is a comparison reference, not an ideal setup target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured upper-body angle at address.",
+        "State whether the measurement was inside, below, or above the tour reference range.",
+        "Say that a lower value represents a more upright measured setup.",
+        "Say that a higher value represents more measured upper-body lean.",
+        "Compare reliable address-angle measurements between two swings.",
+        "Explain address and spine angle in beginner-friendly language.",
+        "Describe the starting position neutrally.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Say the golfer was standing too tall, bending too much, or had the correct setup solely from the reference comparison.",
+        "Describe the setup as correct, incorrect, good, bad, ideal, athletic, balanced, comfortable, or faulty solely from this metric.",
+        "Claim that the angle caused a slice, hook, poor contact, inconsistency, loss of distance, or another shot result.",
+        "Infer knee flex, hip hinge, weight distribution, arm position, distance from the ball, club length, or equipment fit from this metric alone.",
+        "Diagnose mobility, flexibility, strength, back problems, posture problems, or injury.",
+        "Recommend a target angle, setup change, drill, or correction.",
+        "Treat the tour reference range as the correct setup for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured upper-body angle at address was within the tour reference range. In plain language, the amount of forward lean in your setup fell within the comparison range.",
+        "Below the reference range": "Your measured upper-body angle at address was below the tour reference range. This means your setup appeared more upright than the comparison range in this measurement.",
+        "Above the reference range": "Your measured upper-body angle at address was above the tour reference range. This means your setup showed more upper-body lean than the comparison range in this measurement.",
+        "Comparison — increased": "Your measured spine angle at address increased compared with the earlier swing. That means the current setup showed more upper-body lean.",
+        "Comparison — decreased": "Your measured spine angle at address decreased compared with the earlier swing. That means the current setup appeared more upright.",
+        "Low confidence": "The available camera view was not reliable enough to assess your upper-body angle at address confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You are standing too tall.”",
+        "“You are bent over too much.”",
+        "“Your setup posture is perfect.”",
+        "“You need more spine tilt.”",
+        "“This setup angle caused the slice.”",
+        "“Your back is too rounded.”",
+        "“Your mobility is limiting your address position.”",
+        "“This is the ideal setup angle.”"
+      ],
+      "source_file": "spine_angle_address.md",
+      "source_title": "Spine Angle at Address"
+    },
+    "spine_tilt_impact_deg": {
+      "label": "Spine angle at impact",
+      "plain_name": "How much the upper body leans at impact",
+      "event": "impact",
+      "swing_phase_display": "Impact",
+      "unit": "degrees",
+      "measures": "Measures how far the upper body is tilted away from an upright position at the moment of impact.",
+      "beginner_explanation": "Spine angle at impact describes how much the golfer’s upper body was leaning when the club reached the ball.",
+      "why": "This measurement helps describe the golfer’s upper-body position at impact. It does not by itself determine posture quality, swing plane, contact quality, or why the golfer reached that position.",
+      "in_range_phrasing": "The measured upper-body angle at impact was within the tour reference range.",
+      "out_low_phrasing": "The measured upper-body angle at impact was below the tour reference range, meaning the golfer was more upright at impact than the comparison range.",
+      "out_high_phrasing": "The measured upper-body angle at impact was above the tour reference range, meaning the golfer showed more upper-body lean at impact than the comparison range.",
+      "glosses": {
+        "spine angle": "How much the upper body leans away from an upright position.",
+        "impact": "The moment the club meets the ball.",
+        "upper-body lean": "The angle of the torso relative to standing upright.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "Upper-body tilt at impact, in degrees.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Posture quality, swing plane, early extension, balance, contact quality, ball flight, physical limitations, or whether the golfer should lean more or less."
+      },
+      "comparison_language": [
+        "The measured spine angle at impact increased compared with the earlier swing.",
+        "The measured spine angle at impact decreased compared with the earlier swing.",
+        "The measured impact angle was similar in both swings.",
+        "The current impact position was more upright than the earlier impact position.",
+        "The current impact position showed more upper-body lean than the earlier impact position.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It depends on reliable detection of impact and the relevant body joints.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera angle, camera tilt, body visibility, pose-estimation quality, clothing, stance orientation, and impact detection.",
+        "The metric describes upper-body angle in the available view and may not capture the golfer’s full three-dimensional posture.",
+        "This metric measures the angle at impact, not how much the angle changed from address. Use posture_loss_deg for the setup-to-impact change.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured upper-body angle at impact.",
+        "State whether the measurement was inside, below, or above the tour reference range.",
+        "Say that a lower value represents a more upright measured impact position.",
+        "Say that a higher value represents more measured upper-body lean.",
+        "Compare reliable impact-angle measurements between two swings.",
+        "Explain spine angle and impact in beginner-friendly language.",
+        "Describe the measured position neutrally.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Say the golfer stood up, stayed down, maintained posture, or lost posture based only on the impact angle.",
+        "Call the movement early extension unless a separate approved metric directly supports that conclusion.",
+        "Describe the impact position as correct, incorrect, good, bad, ideal, athletic, stable, or faulty solely from the reference comparison.",
+        "Claim that the angle caused thin contact, fat contact, topped shots, a slice, a hook, loss of distance, or another shot result.",
+        "Infer the direction or amount of change from address without retrieving spine_tilt_address_deg or posture_loss_deg.",
+        "Infer knee flex, hip movement, head movement, balance, weight transfer, club path, clubface angle, or equipment fit from this metric alone.",
+        "Diagnose mobility, flexibility, strength, back problems, posture problems, or injury.",
+        "Recommend a target angle, posture change, drill, or correction.",
+        "Treat the tour reference range as the correct impact position for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured upper-body angle at impact was within the tour reference range. In plain language, the amount of upper-body lean at impact fell within the comparison range.",
+        "Below the reference range": "Your measured upper-body angle at impact was below the tour reference range. This means your upper body appeared more upright at impact than the comparison range in this measurement.",
+        "Above the reference range": "Your measured upper-body angle at impact was above the tour reference range. This means your upper body showed more lean at impact than the comparison range in this measurement.",
+        "Comparison — increased": "Your measured spine angle at impact increased compared with the earlier swing. That means the current impact position showed more upper-body lean.",
+        "Comparison — decreased": "Your measured spine angle at impact decreased compared with the earlier swing. That means the current impact position appeared more upright.",
+        "Distinguishing impact angle from posture change": "This metric describes your upper-body angle at impact. It does not by itself show how much your posture changed from setup.",
+        "Low confidence": "The available camera view was not reliable enough to assess your upper-body angle at impact confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You stood up through impact.”",
+        "“You maintained your posture perfectly.”",
+        "“This is early extension.”",
+        "“Your impact posture caused the poor contact.”",
+        "“You need more spine tilt at impact.”",
+        "“Your impact position is ideal.”",
+        "“Your back mobility is limiting your swing.”",
+        "“This angle caused the ball to slice.”"
+      ],
+      "source_file": "spine_angle_impact.md",
+      "source_title": "Spine Angle at Impact"
+    },
+    "posture_loss_deg": {
+      "label": "Posture change",
+      "plain_name": "How much the upper-body angle changes from setup to impact",
+      "event": "impact",
+      "swing_phase_display": "Setup to impact",
+      "unit": "degrees",
+      "measures": "Measures how much the golfer’s spine angle changed between the setup position and impact.",
+      "beginner_explanation": "Posture change describes how much the upper body’s forward-leaning angle changed during the swing.",
+      "why": "This measurement helps describe whether the golfer’s upper-body angle stayed similar or changed between setup and impact. It does not by itself identify a swing fault, explain why the change occurred, or determine contact quality.",
+      "in_range_phrasing": "The measured change in upper-body angle from setup to impact was within the tour reference range.",
+      "out_low_phrasing": "A below-range interpretation is not used for this metric unless the scorecard explicitly supports it.",
+      "out_high_phrasing": "The measured upper-body angle changed more from setup to impact than the tour reference range.",
+      "glosses": {
+        "posture": "The upper-body and spine angle held during the swing.",
+        "posture change": "The difference in upper-body angle between setup and impact.",
+        "spine angle": "How much the upper body leans away from an upright position.",
+        "setup": "The golfer’s starting position before the swing begins.",
+        "impact": "The moment the club meets the ball.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "The change in spine angle from setup to impact, in degrees.",
+        "derived_comparison": "Whether the amount of change was inside or above the tour reference range.",
+        "not_supported": "Early extension, swing plane, balance, contact quality, flexibility, injury, ball flight, or whether the golfer should maintain more posture."
+      },
+      "comparison_language": [
+        "The measured posture change increased compared with the earlier swing.",
+        "The measured posture change decreased compared with the earlier swing.",
+        "The measured posture change was similar in both swings.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It depends on reliable detection of both setup and impact.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera angle, body visibility, pose-estimation quality, and event detection.",
+        "The metric reports the amount of angle change, not the direction or cause of the change unless that information is separately measured.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of upper-body angle change from setup to impact.",
+        "State whether the measurement was inside or above the tour reference range.",
+        "Compare reliable posture-change measurements between two swings.",
+        "Explain the measurement in beginner-friendly language.",
+        "Describe the change neutrally.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Automatically call the movement “early extension.”",
+        "Say the golfer stood up, dipped, lost posture, or stayed in posture unless a separate directional measurement supports that wording.",
+        "Describe the movement as correct, incorrect, good, bad, ideal, or faulty solely from the reference comparison.",
+        "Claim that the change caused poor contact, thin shots, fat shots, inconsistency, a slice, a hook, or loss of distance.",
+        "Infer swing plane, pelvis movement, knee action, head movement, balance, or weight transfer from this metric alone.",
+        "Diagnose mobility, flexibility, strength, posture problems, or injury.",
+        "Recommend a drill, correction, spine angle, or posture target.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured upper-body angle change from setup to impact was within the tour reference range. In plain language, the amount your posture changed fell within the comparison range.",
+        "Above the reference range": "Your measured upper-body angle changed more from setup to impact than the tour reference range. This describes the difference between the two measured positions without identifying a fault or cause.",
+        "Comparison — increased": "Your measured posture change increased compared with the earlier swing. That means the difference between your setup and impact angles was larger in the current swing.",
+        "Comparison — decreased": "Your measured posture change decreased compared with the earlier swing. That means the upper-body angle stayed more similar between setup and impact than in the earlier swing, without by itself showing that the change was better.",
+        "Low confidence": "The available camera view was not reliable enough to assess posture change confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You lost your posture.”",
+        "“You stood up through impact.”",
+        "“This is early extension.”",
+        "“Your posture change caused poor contact.”",
+        "“You need to maintain your spine angle.”",
+        "“Your posture was perfect.”",
+        "“This movement shows limited mobility.”"
+      ],
+      "source_file": "posture_change.md",
+      "source_title": "Posture Change from Setup to Impact"
+    },
+    "head_sway_max_pct": {
+      "label": "Head sway",
+      "plain_name": "How much the head moves sideways",
+      "event": "backswing",
+      "swing_phase_display": "Backswing and overall swing",
+      "unit": "percent of body height",
+      "measures": "Measures the greatest sideways movement of the head during the swing, expressed relative to the golfer’s body height.",
+      "beginner_explanation": "Head sway describes how far the head moved side to side during the swing.",
+      "why": "This measurement helps describe head movement during the swing. It does not by itself determine balance, contact quality, swing consistency, or whether the golfer should keep the head still.",
+      "in_range_phrasing": "The measured sideways head movement was within the tour reference range.",
+      "out_low_phrasing": "The measured sideways head movement was below the tour reference range.",
+      "out_high_phrasing": "The measured sideways head movement was above the tour reference range.",
+      "glosses": {
+        "head sway": "Sideways movement of the head during the swing.",
+        "sideways movement": "Movement across the camera view rather than up or down.",
+        "percent of body height": "A body-size-adjusted way of expressing movement distance.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "Maximum sideways head movement during the swing, relative to body height.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Balance, stability, low-point control, contact quality, consistency, ball flight, posture, or whether the golfer should move the head more or less."
+      },
+      "comparison_language": [
+        "The measured sideways head movement increased compared with the earlier swing.",
+        "The measured sideways head movement decreased compared with the earlier swing.",
+        "The measured sideways head movement was similar in both swings.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It measures sideways image-plane movement and may not represent full three-dimensional head motion.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera angle, camera movement, body visibility, pose-estimation quality, and head-joint detection.",
+        "The value is normalized by body height to support comparison across golfers.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of sideways head movement.",
+        "State whether the measurement was inside, below, or above the tour reference range.",
+        "Compare reliable head-sway measurements between two swings.",
+        "Explain the measurement in beginner-friendly language.",
+        "State that the value is relative to body height.",
+        "Describe the movement neutrally.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Say the golfer kept the head “still enough,” moved it “too much,” or should keep it fixed.",
+        "Describe the movement as correct, incorrect, good, bad, ideal, unstable, or faulty solely from the reference comparison.",
+        "Claim that the measured head movement caused poor contact, inconsistent shots, a changing low point, a slice, a hook, or loss of distance.",
+        "Infer balance, weight transfer, posture, eye position, spine movement, or body sway from this metric alone.",
+        "Diagnose a physical limitation, vision issue, mobility issue, or injury.",
+        "Recommend a drill, correction, head position, or movement target.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured sideways head movement was within the tour reference range. In plain language, the amount your head moved side to side fell within the comparison range.",
+        "Below the reference range": "Your measured sideways head movement was below the tour reference range. This means the head moved a smaller distance side to side than the comparison range in this measurement.",
+        "Above the reference range": "Your measured sideways head movement was above the tour reference range. This means the head moved farther side to side than the comparison range in this measurement.",
+        "Comparison — increased": "Your measured sideways head movement increased compared with the earlier swing. This describes a difference between the two swings without by itself showing whether the current movement was better or worse.",
+        "Comparison — decreased": "Your measured sideways head movement decreased compared with the earlier swing. This shows how the measured head motion changed without judging that change as beneficial.",
+        "Low confidence": "The available camera view was not reliable enough to assess sideways head movement confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You moved your head too much.”",
+        "“Keep your head still.”",
+        "“Your head sway caused the poor contact.”",
+        "“Your head movement shows that your balance is weak.”",
+        "“This is the ideal amount of head movement.”",
+        "“Your head stayed perfectly stable.”",
+        "“Your sway caused the ball to slice.”"
+      ],
+      "source_file": "head_sway.md",
+      "source_title": "Head Sway"
+    },
+    "head_lift_max_pct": {
+      "label": "Head height change",
+      "plain_name": "How much the head moves up and down",
+      "event": "downswing",
+      "swing_phase_display": "Downswing and overall swing",
+      "unit": "percent of body height",
+      "measures": "Measures the greatest upward or downward movement of the head during the swing, expressed relative to the golfer’s body height.",
+      "beginner_explanation": "Head height change describes how much the head moved vertically during the swing.",
+      "why": "This measurement helps describe vertical head movement. It does not by itself determine posture quality, contact consistency, balance, swing plane, or whether the golfer should keep the head at a fixed height.",
+      "in_range_phrasing": "The measured head height change was within the tour reference range.",
+      "out_low_phrasing": "The measured head height change was below the tour reference range.",
+      "out_high_phrasing": "The measured head height change was above the tour reference range.",
+      "glosses": {
+        "head height change": "Upward or downward movement of the head during the swing.",
+        "vertical movement": "Movement up or down in the camera view.",
+        "percent of body height": "A body-size-adjusted way of expressing movement distance.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "Maximum vertical head movement during the swing, relative to body height.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Contact quality, low-point control, posture quality, balance, swing plane, ball flight, or whether the golfer should move the head more or less."
+      },
+      "comparison_language": [
+        "The measured head height change increased compared with the earlier swing.",
+        "The measured head height change decreased compared with the earlier swing.",
+        "The measured head height change was similar in both swings.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It measures vertical movement in the camera image and may not represent full three-dimensional head motion.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera angle, camera movement, body visibility, pose-estimation quality, and head-joint detection.",
+        "The value is normalized by body height to support comparison across golfers.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of vertical head movement.",
+        "State whether the measurement was inside, below, or above the tour reference range.",
+        "Compare reliable head-height measurements between two swings.",
+        "Explain the measurement in beginner-friendly language.",
+        "State that the value is relative to body height.",
+        "Describe the movement neutrally.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Say the golfer lifted, dipped, stood up, or stayed down unless the measurement direction specifically supports that wording.",
+        "Say the golfer moved “too much,” “too little,” or should keep the head at one height.",
+        "Describe the movement as correct, incorrect, good, bad, ideal, unstable, or faulty solely from the reference comparison.",
+        "Claim that the movement caused thin contact, fat contact, topped shots, poor consistency, a changing low point, or another shot result.",
+        "Infer spine-angle change, posture loss, knee movement, balance, or body sway from this metric alone.",
+        "Diagnose mobility, strength, vision, posture, or injury.",
+        "Recommend a drill, correction, head position, or movement target.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured head height change was within the tour reference range. In plain language, the amount your head moved up and down fell within the comparison range.",
+        "Below the reference range": "Your measured head height change was below the tour reference range. This means the head moved a smaller vertical distance than the comparison range in this measurement.",
+        "Above the reference range": "Your measured head height change was above the tour reference range. This means the head moved farther up or down than the comparison range in this measurement.",
+        "Comparison — increased": "Your measured head height change increased compared with the earlier swing. This describes a difference in vertical head movement without by itself showing whether the current swing was better or worse.",
+        "Comparison — decreased": "Your measured head height change decreased compared with the earlier swing. This shows how the measured head movement changed without judging that change as beneficial.",
+        "Low confidence": "The available camera view was not reliable enough to assess head height change confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You lifted your head too early.”",
+        "“Keep your head down.”",
+        "“Your head movement caused the topped shot.”",
+        "“You stood up through impact.”",
+        "“Your vertical movement shows poor posture.”",
+        "“This is the ideal amount of head movement.”",
+        "“Your head stayed perfectly level.”"
+      ],
+      "source_file": "head_height_change.md",
+      "source_title": "Head Height Change"
+    },
+    "left_arm_bend_top_deg": {
+      "label": "Lead-arm extension",
+      "plain_name": "How straight or bent the lead arm is at the top",
+      "event": "top",
+      "swing_phase_display": "Top of the backswing",
+      "unit": "degrees",
+      "measures": "Measures the angle of the left arm at the top of the backswing to describe how straight or bent it appears.",
+      "beginner_explanation": "Lead-arm extension describes how much the arm closer to the target is straightened or bent at the top of the backswing. For a right-handed golfer, the lead arm is usually the left arm. For a left-handed golfer, the lead arm is usually the right arm.",
+      "why": "This measurement helps describe the shape and position of the lead arm at the top of the backswing. It does not by itself determine backswing quality, swing width, power, contact quality, or whether the arm should be straighter.",
+      "in_range_phrasing": "The measured lead-arm position was within the tour reference range at the top of the backswing.",
+      "out_low_phrasing": "The measured lead-arm angle was below the tour reference range, indicating more bend than the comparison range.",
+      "out_high_phrasing": "An above-range interpretation should only be used if the scorecard explicitly supports one for this metric.",
+      "glosses": {
+        "lead arm": "The arm closer to the target.",
+        "lead-arm extension": "How straight the lead arm appears during the swing.",
+        "arm bend angle": "The measured angle used to describe how bent or straight the arm is.",
+        "top of the backswing": "The point where the backswing ends and the downswing begins.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "The lead-arm bend angle at the top of the backswing.",
+        "derived_comparison": "Whether the value was inside or outside the tour reference range.",
+        "not_supported": "Power, swing width, structure, flexibility, injury, contact quality, ball flight, or whether the golfer should straighten or bend the arm more."
+      },
+      "comparison_language": [
+        "The measured lead-arm bend increased compared with the earlier swing.",
+        "The measured lead-arm bend decreased compared with the earlier swing.",
+        "The measured lead-arm position was similar in both swings.",
+        "The lead arm appeared straighter than in the earlier swing.",
+        "The lead arm appeared more bent than in the earlier swing.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "Arm-angle estimates can be sensitive to camera angle, elbow visibility, clothing, body overlap, and pose-estimation quality.",
+        "This metric is especially vulnerable to occlusion when the arm crosses the torso or club.",
+        "It should not be interpreted, compared, or revealed when the scorecard marks the measurement as low confidence.",
+        "The current indicator key assumes the left arm is the lead arm. Handedness should be confirmed before describing it as the lead arm.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of arm bend at the top.",
+        "State whether the reliable measurement was inside or below the tour reference range.",
+        "Say that a smaller extension value represents more measured bend when the metric definition supports that interpretation.",
+        "Compare reliable measurements between two swings.",
+        "Explain lead arm and arm extension in beginner-friendly language.",
+        "State that the metric cannot be assessed when confidence is low.",
+        "Use “left arm” instead of “lead arm” when handedness is unknown."
+      ],
+      "prohibited_inferences": [
+        "Assume the golfer is right-handed unless handedness is available.",
+        "Describe the left arm as the lead arm for a left-handed golfer.",
+        "Say the arm was too bent, not straight enough, or ideally straight.",
+        "Describe the movement as correct, incorrect, good, bad, strong, weak, ideal, or faulty solely from the reference comparison.",
+        "Claim that the arm position created or reduced power, width, speed, distance, consistency, or contact quality.",
+        "Infer shoulder turn, wrist position, club position, swing plane, or trail-arm movement from this metric alone.",
+        "Diagnose flexibility, strength, elbow problems, mobility, or injury.",
+        "Recommend straightening the arm, changing the backswing, or using a drill.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured left-arm position at the top was within the tour reference range. In plain language, the amount of bend in the arm fell within the comparison range.",
+        "Below the reference range": "Your measured left-arm angle was below the tour reference range at the top. This means the arm appeared more bent than the comparison range in this measurement.",
+        "Comparison — straighter": "Your measured left arm appeared straighter than in the earlier swing. This describes a change in arm position without showing by itself that the current swing was better.",
+        "Comparison — more bent": "Your measured left arm appeared more bent than in the earlier swing. This shows how the two measurements differed without judging the change as beneficial or harmful.",
+        "Handedness unknown": "The system measured the left arm at the top of the backswing. I cannot confidently call it the lead arm unless the golfer’s handedness is known.",
+        "Low confidence": "The available camera view was not reliable enough to assess the arm position confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“Your lead arm was too bent.”",
+        "“You need to keep your left arm straight.”",
+        "“Your arm collapsed at the top.”",
+        "“This cost you power.”",
+        "“Your swing lacks width.”",
+        "“Your elbow mobility is limited.”",
+        "“This is the perfect lead-arm position.”",
+        "“Your bent arm caused poor contact.”"
+      ],
+      "source_file": "lead_arm_extension.md",
+      "source_title": "Lead-Arm Extension at the Top",
+      "handedness_note": "The current indicator key assumes the left arm is the lead arm, which applies to a right-handed golfer."
+    },
+    "right_arm_bend_top_deg": {
+      "label": "Trail-arm position",
+      "plain_name": "How much the trail arm bends at the top",
+      "event": "top",
+      "swing_phase_display": "Top of the backswing",
+      "unit": "degrees",
+      "measures": "Measures the angle of the right arm at the top of the backswing to describe how much it appears folded or extended.",
+      "beginner_explanation": "Trail-arm position describes how much the arm farther from the target bends at the top of the backswing. For a right-handed golfer, the trail arm is usually the right arm. For a left-handed golfer, the trail arm is usually the left arm.",
+      "why": "This measurement helps describe the shape and position of the measured arm at the top of the backswing. It does not by itself determine backswing quality, club support, power, swing plane, or whether the arm should bend more or less.",
+      "in_range_phrasing": "The measured right-arm bend at the top was within the tour reference range.",
+      "out_low_phrasing": "The measured right-arm bend was below the tour reference range, meaning the arm appeared less folded than the comparison range.",
+      "out_high_phrasing": "The measured right-arm bend was above the tour reference range, meaning the arm appeared more folded than the comparison range.",
+      "glosses": {
+        "trail arm": "The arm farther from the target.",
+        "arm bend": "How much the elbow joint is folded.",
+        "folded arm": "An arm position with more bend at the elbow.",
+        "top of the backswing": "The point where the backswing ends and the downswing begins.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "The right-arm bend angle at the top of the backswing.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Power, club support, swing width, sequencing, flexibility, injury, contact quality, ball flight, or whether the golfer should change the arm position."
+      },
+      "comparison_language": [
+        "The measured right-arm bend increased compared with the earlier swing.",
+        "The measured right-arm bend decreased compared with the earlier swing.",
+        "The measured right-arm position was similar in both swings.",
+        "The right arm appeared more folded than in the earlier swing.",
+        "The right arm appeared less folded than in the earlier swing.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "Arm-angle estimates can be affected by camera angle, elbow visibility, clothing, body overlap, club position, and pose-estimation quality.",
+        "This metric may be unreliable when the arm is partly hidden behind the torso or another body part.",
+        "It should not be interpreted, compared, or revealed when the scorecard marks the measurement as low confidence.",
+        "The current indicator key measures the right arm. Handedness must be known before calling it the trail arm.",
+        "Use “right arm” when handedness is unknown.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of right-arm bend at the top.",
+        "State whether the reliable measurement was inside, below, or above the tour reference range.",
+        "Say that a higher bend value represents a more folded measured arm when the metric definition supports that interpretation.",
+        "Say that a lower bend value represents a less folded measured arm.",
+        "Compare reliable right-arm measurements between two swings.",
+        "Explain trail arm and arm bend in beginner-friendly language.",
+        "State that the metric cannot be assessed when confidence is low.",
+        "Use “right arm” instead of “trail arm” when handedness is unknown."
+      ],
+      "prohibited_inferences": [
+        "Assume the golfer is right-handed unless handedness is available.",
+        "Call the right arm the trail arm for a left-handed golfer.",
+        "Say the arm was too folded, not folded enough, too straight, or ideally positioned.",
+        "Describe the movement as correct, incorrect, good, bad, ideal, strong, weak, or faulty solely from the reference comparison.",
+        "Claim that the arm position supported or failed to support the club.",
+        "Claim that the arm position created or reduced power, speed, width, consistency, or contact quality.",
+        "Infer wrist position, club position, shoulder turn, swing plane, elbow direction, or lead-arm movement from this metric alone.",
+        "Diagnose flexibility, strength, elbow problems, mobility, or injury.",
+        "Recommend changing the arm position, elbow bend, or backswing.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured right-arm bend at the top was within the tour reference range. In plain language, the amount the arm folded fell within the comparison range.",
+        "Below the reference range": "Your measured right-arm bend was below the tour reference range at the top. This means the arm appeared less folded than the comparison range in this measurement.",
+        "Above the reference range": "Your measured right-arm bend was above the tour reference range at the top. This means the arm appeared more folded than the comparison range in this measurement.",
+        "Comparison — more folded": "Your measured right arm appeared more folded than in the earlier swing. This describes a change in arm position without showing by itself that the current swing was better.",
+        "Comparison — less folded": "Your measured right arm appeared less folded than in the earlier swing. This shows how the two measurements differed without judging the change as beneficial or harmful.",
+        "Handedness unknown": "The system measured the right arm at the top of the backswing. I cannot confidently call it the trail arm unless the golfer’s handedness is known.",
+        "Low confidence": "The available camera view was not reliable enough to assess the right-arm position confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“Your trail arm folded too much.”",
+        "“You need to tuck your right elbow.”",
+        "“Your right arm did not support the club.”",
+        "“This arm position cost you power.”",
+        "“Your elbow position caused the slice.”",
+        "“Your trail arm was perfect.”",
+        "“Your elbow mobility is limited.”",
+        "“You need more bend in the trail arm.”"
+      ],
+      "source_file": "trail_arm_position.md",
+      "source_title": "Trail-Arm Position at the Top",
+      "handedness_note": "The current indicator key measures the right arm. The right arm is the trail arm for a right-handed golfer, but the lead arm for a left-handed golfer."
+    },
+    "lead_knee_flex_address_deg": {
+      "label": "Lead-knee flex at address",
+      "plain_name": "How bent the lead knee is at setup",
+      "event": "address",
+      "swing_phase_display": "Address",
+      "unit": "degrees",
+      "measures": "Measures the angle of the lead knee at address to describe how bent or straight it appears in the setup position.",
+      "beginner_explanation": "Lead-knee flex describes how much the knee closer to the target is bent before the swing begins.",
+      "why": "This measurement helps describe the golfer’s lower-body setup position. It does not by itself determine balance, athletic posture, comfort, mobility, power, or whether the knee should be bent more or less.",
+      "in_range_phrasing": "The measured lead-knee flex at address was within the tour reference range.",
+      "out_low_phrasing": "The measured lead-knee angle was below the tour reference range, meaning the knee appeared more bent than the comparison range.",
+      "out_high_phrasing": "The measured lead-knee angle was above the tour reference range, meaning the knee appeared straighter than the comparison range.",
+      "glosses": {
+        "lead knee": "The knee closer to the target.",
+        "knee flex": "How much the knee joint is bent.",
+        "address": "The setup position immediately before the swing begins.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "Lead-knee angle at address, in degrees.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Balance, setup quality, mobility, strength, comfort, weight distribution, power, ball flight, or whether the golfer should change the knee angle."
+      },
+      "comparison_language": [
+        "The measured lead-knee flex at address increased compared with the earlier swing.",
+        "The measured lead-knee flex at address decreased compared with the earlier swing.",
+        "The measured knee position was similar in both setups.",
+        "The lead knee appeared more bent than in the earlier setup.",
+        "The lead knee appeared straighter than in the earlier setup.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "Knee-angle estimates can be affected by camera angle, leg visibility, clothing, stance orientation, body overlap, and pose-estimation quality.",
+        "It should not be interpreted, compared, or revealed when the scorecard marks the measurement as low confidence.",
+        "Handedness must be known before identifying a specific left or right knee as the lead knee.",
+        "Use “measured knee” or the physical side when handedness is unknown.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of lead-knee flex at address.",
+        "State whether the reliable measurement was inside, below, or above the tour reference range.",
+        "Say that a lower angle represents a more bent measured knee when the metric definition supports that interpretation.",
+        "Say that a higher angle represents a straighter measured knee.",
+        "Compare reliable setup measurements between two swings.",
+        "Explain lead knee and knee flex in beginner-friendly language.",
+        "State when the available measurement is not reliable enough to assess.",
+        "Use the physical side instead of “lead knee” when handedness is unknown."
+      ],
+      "prohibited_inferences": [
+        "Assume which physical knee is the lead knee unless handedness is available.",
+        "Say the golfer was too bent, too straight, not athletic enough, or in the correct setup solely from the reference comparison.",
+        "Describe the setup as correct, incorrect, good, bad, ideal, balanced, athletic, or faulty solely from this metric.",
+        "Claim that the knee position caused poor contact, a slice, a hook, loss of distance, instability, or another shot result.",
+        "Infer weight distribution, pressure under the feet, hip position, spine angle, stance width, or overall balance from this metric alone.",
+        "Diagnose mobility, flexibility, strength, knee problems, or injury.",
+        "Recommend a target angle, setup change, drill, or correction.",
+        "Treat the tour reference range as the correct setup for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured lead-knee flex at address was within the tour reference range. In plain language, the amount of knee bend in your setup fell within the comparison range.",
+        "Below the reference range": "Your measured lead-knee angle was below the tour reference range at address. This means the knee appeared more bent than the comparison range in this measurement.",
+        "Above the reference range": "Your measured lead-knee angle was above the tour reference range at address. This means the knee appeared straighter than the comparison range in this measurement.",
+        "Comparison — more bent": "Your measured lead knee appeared more bent than in the earlier setup. This describes a difference between the two measurements without showing by itself that the current setup was better.",
+        "Comparison — straighter": "Your measured lead knee appeared straighter than in the earlier setup. This shows how the two positions differed without judging the change as beneficial or harmful.",
+        "Handedness unknown": "The system measured the knee angle at address, but I cannot confidently identify it as the lead knee unless the golfer’s handedness is known.",
+        "Low confidence": "The available camera view was not reliable enough to assess knee flex at address confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“Your lead knee is too bent.”",
+        "“You need more knee flex.”",
+        "“Your setup is not athletic enough.”",
+        "“Your knee position caused the poor contact.”",
+        "“This is the perfect amount of knee bend.”",
+        "“Your balance is weak.”",
+        "“Your knee mobility is limited.”",
+        "“You should straighten your lead knee.”"
+      ],
+      "source_file": "lead_knee_address.md",
+      "source_title": "Lead-Knee Flex at Address",
+      "handedness_note": "“Lead knee” means the knee closer to the target. For a right-handed golfer, this is usually the left knee; for a left-handed golfer, it is usually the right knee."
+    },
+    "lead_knee_flex_impact_deg": {
+      "label": "Lead-knee flex at impact",
+      "plain_name": "How bent the lead knee is at impact",
+      "event": "impact",
+      "swing_phase_display": "Impact",
+      "unit": "degrees",
+      "measures": "Measures the angle of the lead knee at impact to describe how bent or straight it appears when the club reaches the ball.",
+      "beginner_explanation": "Lead-knee flex at impact describes how much the knee closer to the target is bent when the club meets the ball.",
+      "why": "This measurement helps describe the lower-body position at impact. It does not by itself determine power, balance, sequencing, contact quality, or whether the knee should be bent or straightened more.",
+      "in_range_phrasing": "The measured lead-knee flex at impact was within the tour reference range.",
+      "out_low_phrasing": "The measured lead-knee angle was below the tour reference range, meaning the knee appeared more bent than the comparison range.",
+      "out_high_phrasing": "The measured lead-knee angle was above the tour reference range, meaning the knee appeared straighter than the comparison range.",
+      "glosses": {
+        "lead knee": "The knee closer to the target.",
+        "knee flex": "How much the knee joint is bent.",
+        "impact": "The moment the club meets the ball.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "Lead-knee angle at impact, in degrees.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Power production, ground-force use, sequencing, balance, contact quality, ball flight, injury, or whether the golfer should change the knee angle."
+      },
+      "comparison_language": [
+        "The measured lead-knee flex at impact increased compared with the earlier swing.",
+        "The measured lead-knee flex at impact decreased compared with the earlier swing.",
+        "The measured knee position at impact was similar in both swings.",
+        "The lead knee appeared more bent than in the earlier swing.",
+        "The lead knee appeared straighter than in the earlier swing.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "Knee-angle estimates can be affected by camera angle, leg visibility, clothing, stance orientation, body overlap, pose-estimation quality, and impact detection.",
+        "It should not be interpreted, compared, or revealed when the scorecard marks the measurement as low confidence.",
+        "Handedness must be known before identifying a specific left or right knee as the lead knee.",
+        "Use “measured knee” or the physical side when handedness is unknown.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of lead-knee flex at impact.",
+        "State whether the reliable measurement was inside, below, or above the tour reference range.",
+        "Say that a lower angle represents a more bent measured knee when the metric definition supports that interpretation.",
+        "Say that a higher angle represents a straighter measured knee.",
+        "Compare reliable impact measurements between two swings.",
+        "Explain lead knee, knee flex, and impact in beginner-friendly language.",
+        "State when the available measurement is not reliable enough to assess.",
+        "Use the physical side instead of “lead knee” when handedness is unknown."
+      ],
+      "prohibited_inferences": [
+        "Assume which physical knee is the lead knee unless handedness is available.",
+        "Say the golfer straightened the knee too early, too late, too much, or not enough.",
+        "Describe the movement as correct, incorrect, good, bad, ideal, powerful, stable, or faulty solely from the reference comparison.",
+        "Claim that the knee position created or reduced power, speed, distance, balance, or contact quality.",
+        "Infer pressure under the feet, ground-force use, hip motion, sequencing, weight transfer, or overall lower-body action from this metric alone.",
+        "Predict ball direction, trajectory, carry, slice, hook, fade, draw, or contact quality.",
+        "Diagnose mobility, flexibility, strength, knee problems, or injury.",
+        "Recommend a target angle, impact position, drill, or correction.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured lead-knee flex at impact was within the tour reference range. In plain language, the amount of knee bend at impact fell within the comparison range.",
+        "Below the reference range": "Your measured lead-knee angle was below the tour reference range at impact. This means the knee appeared more bent than the comparison range in this measurement.",
+        "Above the reference range": "Your measured lead-knee angle was above the tour reference range at impact. This means the knee appeared straighter than the comparison range in this measurement.",
+        "Comparison — more bent": "Your measured lead knee appeared more bent at impact than in the earlier swing. This describes a difference between the two measurements without showing by itself that the current swing was better.",
+        "Comparison — straighter": "Your measured lead knee appeared straighter at impact than in the earlier swing. This shows how the two positions differed without judging the change as beneficial or harmful.",
+        "Handedness unknown": "The system measured the knee angle at impact, but I cannot confidently identify it as the lead knee unless the golfer’s handedness is known.",
+        "Low confidence": "The available camera view was not reliable enough to assess knee flex at impact confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You straightened your lead knee too early.”",
+        "“You need to post up on the lead leg.”",
+        "“Your lead knee stayed too bent.”",
+        "“This knee action created more power.”",
+        "“Your knee position caused poor contact.”",
+        "“This is the ideal impact position.”",
+        "“Your balance is weak.”",
+        "“Your knee mobility is limiting your swing.”"
+      ],
+      "source_file": "lead_knee_impact.md",
+      "source_title": "Lead-Knee Flex at Impact",
+      "handedness_note": "“Lead knee” means the knee closer to the target. For a right-handed golfer, this is usually the left knee; for a left-handed golfer, it is usually the right knee."
+    },
+    "hip_lateral_shift_pct": {
+      "label": "Hip shift toward the target",
+      "plain_name": "How far the hips move sideways toward the target",
+      "event": "impact",
+      "swing_phase_display": "From setup to impact",
+      "unit": "percent of body height",
+      "measures": "Measures how far the hips moved sideways toward the target from setup to impact, expressed relative to the golfer’s body height.",
+      "beginner_explanation": "Hip shift describes the sideways movement of the pelvis toward the target during the swing.",
+      "why": "This measurement helps describe how the lower body changed position from setup to impact. It does not directly measure weight distribution, ground pressure, balance, or the cause of the movement.",
+      "in_range_phrasing": "The measured hip shift toward the target was within the tour reference range.",
+      "out_low_phrasing": "The measured hip shift toward the target was below the tour reference range.",
+      "out_high_phrasing": "The measured hip shift toward the target was above the tour reference range.",
+      "glosses": {
+        "hip shift": "Sideways movement of the pelvis during the swing.",
+        "toward the target": "Movement in the direction the golfer intends to hit the ball.",
+        "percent of body height": "A body-size-adjusted way of expressing movement distance.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "Sideways hip movement toward the target from setup to impact, relative to body height.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Actual weight transfer, balance, ground-force use, power production, sequencing, ball flight, contact quality, or whether the golfer should move more or less."
+      },
+      "comparison_language": [
+        "The measured hip shift increased compared with the earlier swing.",
+        "The measured hip shift decreased compared with the earlier swing.",
+        "The measured hip shift was similar in both swings.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It describes pelvis movement, not actual weight distribution or pressure under the feet.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera angle, body visibility, pose-estimation quality, frame selection, and impact detection.",
+        "The direction “toward the target” depends on the swing orientation being identified correctly.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured amount of lateral hip movement.",
+        "State whether the measurement was inside, below, or above the tour reference range.",
+        "Compare reliable hip-shift measurements from two swings.",
+        "Explain the measurement in beginner-friendly language.",
+        "Describe the movement neutrally.",
+        "State that the metric is normalized relative to body height.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Call the metric “weight transfer” as though body weight or ground pressure was directly measured.",
+        "Say the golfer shifted “enough,” “not enough,” “too much,” or “too little.”",
+        "Describe the movement as correct, incorrect, good, bad, ideal, or faulty solely from the reference comparison.",
+        "Claim that the shift created or reduced power, speed, distance, balance, or consistency.",
+        "Infer pressure under either foot or how the golfer used the ground.",
+        "Claim that the hips slid, swayed, stalled, fired, or cleared unless the approved wording directly supports that description.",
+        "Predict ball direction, contact quality, launch, slice, hook, fade, draw, or distance.",
+        "Diagnose mobility, strength, posture, injury, or physical limitation.",
+        "Recommend a drill, correction, target amount, or movement pattern.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured hip shift toward the target was within the tour reference range. In plain language, your pelvis moved sideways by an amount that fell within the comparison range.",
+        "Below the reference range": "Your measured hip shift toward the target was below the tour reference range. This means the pelvis moved a smaller distance toward the target than the comparison range in this measurement.",
+        "Above the reference range": "Your measured hip shift toward the target was above the tour reference range. This means the pelvis moved farther sideways toward the target than the comparison range in this measurement.",
+        "Comparison — increased": "Your measured hip shift increased compared with the earlier swing. This describes a change in pelvis movement without by itself showing whether the current swing was better.",
+        "Comparison — decreased": "Your measured hip shift decreased compared with the earlier swing. This shows how the two measured swings differed without judging the change as beneficial or harmful.",
+        "Low confidence": "The available camera view was not reliable enough to assess hip shift confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“You did not transfer your weight enough.”",
+        "“You shifted too much.”",
+        "“Your weight stayed on the back foot.”",
+        "“This hip slide caused the slice.”",
+        "“You need to drive your hips toward the target.”",
+        "“Your lower body stalled.”",
+        "“This is the ideal amount of weight transfer.”",
+        "“Your hip shift created more power.”"
+      ],
+      "source_file": "hip_lateral_shift.md",
+      "source_title": "Hip Shift Toward the Target"
+    },
+    "tempo_ratio": {
+      "label": "Tempo",
+      "plain_name": "The timing relationship between the backswing and downswing",
+      "event": "overall",
+      "swing_phase_display": "Overall swing",
+      "unit": "ratio",
+      "measures": "Measures how long the backswing took compared with the downswing. A ratio near `3:1` means the backswing lasted about three times as long as the downswing.",
+      "beginner_explanation": "Tempo describes the timing and rhythm of the swing. It compares the duration of the backswing with the duration of the downswing; it does not directly measure how fast the club or body moved.",
+      "why": "This measurement helps describe the timing pattern of the swing. It does not by itself determine smoothness, consistency, power, contact quality, or whether the golfer should swing faster or slower.",
+      "in_range_phrasing": "The measured backswing-to-downswing timing ratio was within the tour reference range.",
+      "out_low_phrasing": "The measured tempo ratio was below the tour reference range, meaning the backswing was shorter relative to the downswing than in the comparison range.",
+      "out_high_phrasing": "The measured tempo ratio was above the tour reference range, meaning the backswing was longer relative to the downswing than in the comparison range.",
+      "glosses": {
+        "tempo": "The timing relationship between the backswing and downswing.",
+        "tempo ratio": "The backswing duration divided by the downswing duration.",
+        "three-to-one ratio": "A backswing that takes about three times as long as the downswing.",
+        "backswing": "The part of the swing moving away from the target before the club changes direction.",
+        "downswing": "The part of the swing moving from the top toward impact.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "The ratio of backswing duration to downswing duration.",
+        "derived_comparison": "Whether the ratio was inside, below, or above the tour reference range.",
+        "not_supported": "Clubhead speed, hand speed, power, smoothness, rhythm quality, transition quality, contact quality, ball flight, or whether the golfer should speed up or slow down."
+      },
+      "comparison_language": [
+        "The measured tempo ratio increased compared with the earlier swing.",
+        "The measured tempo ratio decreased compared with the earlier swing.",
+        "The measured tempo ratio was similar in both swings.",
+        "The backswing became longer relative to the downswing.",
+        "The backswing became shorter relative to the downswing.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This measurement depends on accurate detection of the beginning of the swing, the top of the backswing, and impact.",
+        "Errors in event detection or missing video frames can affect the calculated ratio.",
+        "It should not be interpreted or compared when the scorecard marks the measurement as low confidence.",
+        "Tempo is a timing ratio and should not be described as clubhead speed, hand speed, or overall swing speed.",
+        "Two swings can have a similar tempo ratio while taking different total amounts of time.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured backswing-to-downswing timing relationship.",
+        "State whether the ratio was inside, below, or above the tour reference range.",
+        "Explain what a three-to-one ratio means.",
+        "Compare reliable tempo ratios between two swings.",
+        "State whether the backswing became longer or shorter relative to the downswing.",
+        "Describe the timing pattern neutrally.",
+        "State when the measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Say the golfer swung too fast or too slowly based only on the tempo ratio.",
+        "Describe the tempo as correct, incorrect, good, bad, perfect, smooth, rushed, or faulty solely from the reference comparison.",
+        "Treat a three-to-one ratio as a required or universally ideal target.",
+        "Claim that the ratio created or reduced power, distance, consistency, or contact quality.",
+        "Infer clubhead speed, hand speed, acceleration, transition force, or total swing duration from the ratio alone.",
+        "Claim that a lower ratio necessarily means the golfer rushed the downswing.",
+        "Claim that a higher ratio necessarily means the golfer had a slow swing.",
+        "Predict ball direction, trajectory, carry, slice, hook, fade, or draw.",
+        "Recommend changing backswing speed, downswing speed, rhythm, or timing.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured backswing-to-downswing timing ratio was within the tour reference range. This means the timing relationship between the two parts of the swing fell within the comparison range.",
+        "Below the reference range": "Your measured tempo ratio was below the tour reference range. In this swing, the backswing took less time relative to the downswing than in the comparison range.",
+        "Above the reference range": "Your measured tempo ratio was above the tour reference range. In this swing, the backswing took more time relative to the downswing than in the comparison range.",
+        "Explaining the ratio": "A three-to-one tempo ratio means the backswing lasts about three times as long as the downswing. It describes relative timing, not how fast the club was travelling.",
+        "Comparison — increased": "Your measured tempo ratio increased compared with the earlier swing. That means the backswing became longer relative to the downswing.",
+        "Comparison — decreased": "Your measured tempo ratio decreased compared with the earlier swing. That means the backswing became shorter relative to the downswing.",
+        "Low confidence": "The swing events were not detected reliably enough to assess the tempo ratio confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“Your swing was too fast.”",
+        "“You rushed the downswing.”",
+        "“Your tempo was perfect.”",
+        "“You need to slow down your backswing.”",
+        "“A three-to-one tempo is the correct tempo for every golfer.”",
+        "“Your quick tempo caused the poor contact.”",
+        "“This tempo produced more power.”",
+        "“Your clubhead speed was low.”"
+      ],
+      "source_file": "tempo.md",
+      "source_title": "Swing Tempo"
+    },
+    "hand_speed_impact_bs": {
+      "label": "Hand speed into impact",
+      "plain_name": "How quickly the hands move through the impact area",
+      "event": "impact",
+      "swing_phase_display": "Impact",
+      "unit": "body-lengths/s",
+      "measures": "Measures the peak speed of the hands through the impact area, normalized relative to the golfer’s body size.",
+      "beginner_explanation": "Hand speed describes how quickly the golfer’s hands moved as they approached and passed through the impact area. The value is adjusted for body size so that measurements can be compared more consistently across golfers.",
+      "why": "This measurement helps describe the speed of the hands through one part of the swing. It does not directly measure clubhead speed, ball speed, power, carry distance, contact quality, or shot outcome.",
+      "in_range_phrasing": "The measured hand speed through the impact area was within the tour reference range.",
+      "out_low_phrasing": "The measured hand speed through the impact area was below the tour reference range.",
+      "out_high_phrasing": "The measured hand speed through the impact area was above the tour reference range.",
+      "glosses": {
+        "hand speed": "How quickly the hands travel during the swing.",
+        "impact area": "The part of the swing immediately around the moment the club reaches the ball.",
+        "peak speed": "The highest measured speed during the selected part of the swing.",
+        "body-lengths per second": "A body-size-adjusted speed unit that expresses movement relative to the golfer’s height or scale.",
+        "normalized by body size": "Adjusted relative to the golfer’s body dimensions to support comparison across golfers.",
+        "tour reference range": "The typical spread of measured values seen across the professional swings used for comparison."
+      },
+      "evidence_classification": {
+        "directly_measured": "Peak hand speed through the impact area, normalized relative to body size.",
+        "derived_comparison": "Whether the value was inside, below, or above the tour reference range.",
+        "not_supported": "Clubhead speed, ball speed, power, efficiency, carry distance, contact quality, ball flight, or whether the golfer should move the hands faster or slower."
+      },
+      "comparison_language": [
+        "The measured hand speed increased compared with the earlier swing.",
+        "The measured hand speed decreased compared with the earlier swing.",
+        "The measured hand speed was similar in both swings.",
+        "The hands moved faster through the impact area than in the earlier swing.",
+        "The hands moved slower through the impact area than in the earlier swing.",
+        "The current measurement moved into the tour reference range.",
+        "The current measurement moved outside the tour reference range.",
+        "The current and earlier measurements were both inside the tour reference range.",
+        "The current and earlier measurements were both outside the tour reference range."
+      ],
+      "limitations": [
+        "This is a motion estimate derived from the available camera view.",
+        "It depends on reliable hand-joint tracking, frame timing, body-scale estimation, and impact detection.",
+        "It should not be interpreted, compared, or revealed when the scorecard marks the measurement as low confidence.",
+        "A single-camera estimate may be affected by camera frame rate, camera angle, motion blur, hand visibility, body overlap, pose-estimation quality, and missing frames.",
+        "The measurement describes hand speed rather than clubhead speed or ball speed.",
+        "The normalized unit may not correspond directly to miles per hour or kilometres per hour.",
+        "The tour range is a comparison reference, not an ideal target for every golfer."
+      ],
+      "allowed_inferences": [
+        "Describe the measured speed of the hands through the impact area.",
+        "State whether the reliable measurement was inside, below, or above the tour reference range.",
+        "Compare reliable hand-speed measurements between two swings.",
+        "Say that the hands moved faster or slower than in an earlier measured swing.",
+        "Explain the body-size-adjusted unit in beginner-friendly language.",
+        "Distinguish hand speed from clubhead speed and ball speed.",
+        "Describe the measurement neutrally.",
+        "State when the available measurement is not reliable enough to assess."
+      ],
+      "prohibited_inferences": [
+        "Call the measurement clubhead speed, swing speed, or ball speed.",
+        "Convert the value into miles per hour or kilometres per hour unless an approved conversion method exists.",
+        "Say the golfer’s hands were too fast, too slow, fast enough, or not fast enough.",
+        "Describe the measurement as correct, incorrect, good, bad, ideal, powerful, weak, efficient, or faulty solely from the reference comparison.",
+        "Claim that higher hand speed produced more power, clubhead speed, ball speed, carry distance, or better contact.",
+        "Claim that lower hand speed caused a loss of distance or poor contact.",
+        "Predict carry, trajectory, launch, slice, hook, fade, draw, or another shot result.",
+        "Infer wrist action, release timing, club position, sequencing, acceleration pattern, or impact quality from this metric alone.",
+        "Recommend speeding up, slowing down, releasing the club differently, or using a drill.",
+        "Treat the tour reference range as the correct target for every golfer.",
+        "Interpret or reveal a value marked as low confidence."
+      ],
+      "approved_examples": {
+        "Inside the reference range": "Your measured hand speed through the impact area was within the tour reference range. In plain language, the speed of your hands fell within the comparison range.",
+        "Below the reference range": "Your measured hand speed through the impact area was below the tour reference range. This describes how quickly the hands moved in this swing and does not directly measure clubhead speed or distance.",
+        "Above the reference range": "Your measured hand speed through the impact area was above the tour reference range. This means the hands moved faster than the comparison range in this measurement, without by itself showing the resulting clubhead or ball speed.",
+        "Comparison — increased": "Your measured hand speed increased compared with the earlier swing. The hands moved faster through the impact area in the current measurement, but this does not by itself establish more power or distance.",
+        "Comparison — decreased": "Your measured hand speed decreased compared with the earlier swing. This describes a change in hand movement without by itself showing whether the current swing was better or worse.",
+        "Explaining the unit": "This hand-speed value is expressed relative to body size rather than in miles per hour. It allows the movement to be compared across golfers of different sizes.",
+        "Low confidence": "The available video and hand tracking were not reliable enough to assess hand speed confidently for this swing."
+      },
+      "prohibited_examples": [
+        "“Your clubhead speed was below average.”",
+        "“Your hands were too slow.”",
+        "“This hand speed cost you distance.”",
+        "“Your faster hands created more power.”",
+        "“You need to release the club faster.”",
+        "“Your hand speed caused the slice.”",
+        "“This is the ideal impact speed.”",
+        "“Your swing speed was excellent.”"
+      ],
+      "source_file": "hand_speed_impact.md",
+      "source_title": "Hand Speed into Impact"
+    }
   }
- },
- "glossary": {
-  "tour range": "the typical spread of values seen across professional tour swings",
-  "tour median": "the middle value among professional tour swings",
-  "address": "the setup position, just before the swing starts",
-  "top": "the top of the backswing, where the club changes direction",
-  "impact": "the instant the club meets the ball",
-  "backswing": "the takeaway and turn back, away from the target",
-  "downswing": "the move from the top of the backswing down to the ball",
-  "percentile": "where this swing sits relative to tour pros \u2014 e.g. 30th percentile means 30% of pros are lower"
- },
- "indicators": {
-  "shoulder_turn_top_deg": {
-   "label": "Shoulder turn",
-   "plain_name": "how far the shoulders rotate at the top",
-   "event": "top",
-   "unit": "degrees",
-   "measures": "how far the shoulders have rotated away from the target at the top of the backswing",
-   "why": "shoulder rotation is the main way the body coils to store energy for the downswing",
-   "in_range_phrasing": "the shoulders rotate about as far as a typical tour swing at the top",
-   "out_low_phrasing": "the shoulders rotate less than most tour swings at the top",
-   "out_high_phrasing": "the shoulders rotate further than most tour swings at the top",
-   "glosses": {
-    "coil": "the wind-up of the body during the backswing that stores energy"
-   }
-  },
-  "hip_turn_top_deg": {
-   "label": "Hip turn at the top",
-   "plain_name": "how far the hips rotate at the top",
-   "event": "top",
-   "unit": "degrees",
-   "measures": "how far the hips have rotated away from the target at the top of the backswing",
-   "why": "the hips turn alongside the shoulders during the backswing; the difference between the two creates separation",
-   "in_range_phrasing": "the hips rotate about as far as a typical tour swing at the top",
-   "out_low_phrasing": "the hips rotate less than most tour swings at the top",
-   "out_high_phrasing": "the hips rotate further than most tour swings at the top",
-   "glosses": {}
-  },
-  "x_factor_top_deg": {
-   "label": "X-factor (shoulder\u2013hip separation)",
-   "plain_name": "the gap between shoulder turn and hip turn at the top",
-   "event": "top",
-   "unit": "degrees",
-   "measures": "the difference between how far the shoulders turn and how far the hips turn at the top",
-   "why": "this separation is a big part of how the body stores and releases power",
-   "in_range_phrasing": "the separation between shoulders and hips is about typical for a tour swing",
-   "out_low_phrasing": "there is less separation between the shoulders and hips than in most tour swings",
-   "out_high_phrasing": "there is more separation between the shoulders and hips than in most tour swings",
-   "glosses": {
-    "X-factor": "the gap between how far the shoulders turn and how far the hips turn",
-    "separation": "the difference between shoulder turn and hip turn"
-   }
-  },
-  "hip_turn_impact_deg": {
-   "label": "Hip rotation at impact",
-   "plain_name": "how open the hips are at impact",
-   "event": "impact",
-   "unit": "degrees",
-   "measures": "how far the hips have rotated open toward the target at the moment of impact",
-   "why": "the hips lead the body's rotation through the ball",
-   "in_range_phrasing": "the hips are about as open at impact as a typical tour swing",
-   "out_low_phrasing": "the hips are less open at impact than most tour swings",
-   "out_high_phrasing": "the hips are more open at impact than most tour swings",
-   "glosses": {
-    "open hips": "hips rotated to face more toward the target"
-   }
-  },
-  "spine_tilt_address_deg": {
-   "label": "Spine angle at address",
-   "plain_name": "how much the upper body leans at setup",
-   "event": "address",
-   "unit": "degrees",
-   "measures": "how far the spine is tilted away from vertical at the setup position",
-   "why": "the spine angle at setup sets the posture the swing is built around",
-   "in_range_phrasing": "the upper body leans about as much as a typical tour swing at setup",
-   "out_low_phrasing": "the upper body leans less than most tour swings at setup",
-   "out_high_phrasing": "the upper body leans more than most tour swings at setup",
-   "glosses": {
-    "spine angle": "how much the upper body leans forward from standing upright"
-   }
-  },
-  "spine_tilt_impact_deg": {
-   "label": "Spine angle at impact",
-   "plain_name": "how much the upper body leans at impact",
-   "event": "impact",
-   "unit": "degrees",
-   "measures": "how far the spine is tilted away from vertical at the moment of impact",
-   "why": "keeping a similar posture from setup to impact helps the swing stay on plane",
-   "in_range_phrasing": "the upper body leans about as much at impact as a typical tour swing",
-   "out_low_phrasing": "the upper body leans less at impact than most tour swings",
-   "out_high_phrasing": "the upper body leans more at impact than most tour swings",
-   "glosses": {
-    "spine angle": "how much the upper body leans forward from standing upright"
-   }
-  },
-  "posture_loss_deg": {
-   "label": "Posture (spine angle change)",
-   "plain_name": "how much the spine angle changes from setup to impact",
-   "event": "impact",
-   "unit": "degrees",
-   "measures": "how much the spine angle changes between setup and impact",
-   "why": "tour swings tend to hold their setup posture fairly well into impact",
-   "in_range_phrasing": "the posture holds about as steadily from setup to impact as a typical tour swing",
-   "out_low_phrasing": null,
-   "out_high_phrasing": "the spine angle changes more from setup to impact than in most tour swings, meaning the posture shifts during the swing",
-   "glosses": {
-    "posture": "the spine and body angle held during the swing",
-    "early extension": "standing up out of the setup posture during the downswing"
-   }
-  },
-  "head_sway_max_pct": {
-   "label": "Head sway",
-   "plain_name": "how much the head drifts sideways",
-   "event": "backswing",
-   "unit": "percent of body height",
-   "measures": "the most the head drifts sideways during the swing, as a share of body size",
-   "why": "a stable head helps keep the low point of the swing consistent",
-   "in_range_phrasing": "the head stays about as steady side-to-side as a typical tour swing",
-   "out_low_phrasing": "the head moves less side-to-side than most tour swings",
-   "out_high_phrasing": "the head drifts further side-to-side than most tour swings",
-   "glosses": {
-    "sway": "sideways movement of the head or body away from the ball"
-   }
-  },
-  "head_lift_max_pct": {
-   "label": "Head height change",
-   "plain_name": "how much the head moves up and down",
-   "event": "downswing",
-   "unit": "percent of body height",
-   "measures": "the most the head moves up or down during the swing, as a share of body size",
-   "why": "a steady head height helps the club return to the ball consistently",
-   "in_range_phrasing": "the head stays about as steady in height as a typical tour swing",
-   "out_low_phrasing": "the head moves less up-and-down than most tour swings",
-   "out_high_phrasing": "the head moves more up-and-down than most tour swings",
-   "glosses": {}
-  },
-  "left_arm_bend_top_deg": {
-   "label": "Lead-arm extension",
-   "plain_name": "how straight the lead arm is at the top",
-   "event": "top",
-   "unit": "degrees",
-   "measures": "how straight or bent the lead arm is at the top of the backswing",
-   "why": "lead-arm extension relates to the width and structure of the backswing",
-   "in_range_phrasing": "the lead arm is about as extended at the top as a typical tour swing",
-   "out_low_phrasing": "the lead arm is more bent at the top than most tour swings",
-   "out_high_phrasing": null,
-   "glosses": {
-    "lead arm": "the arm closer to the target (left arm for a right-handed golfer)",
-    "width": "how far the hands and club stay from the body during the backswing"
-   }
-  },
-  "right_arm_bend_top_deg": {
-   "label": "Trail-arm position",
-   "plain_name": "how the trail arm folds at the top",
-   "event": "top",
-   "unit": "degrees",
-   "measures": "how much the trail arm folds at the top of the backswing",
-   "why": "the trail arm folds to support the club at the top of the backswing",
-   "in_range_phrasing": "the trail arm folds about as much at the top as a typical tour swing",
-   "out_low_phrasing": "the trail arm folds less at the top than most tour swings",
-   "out_high_phrasing": "the trail arm folds more at the top than most tour swings",
-   "glosses": {
-    "trail arm": "the arm farther from the target (right arm for a right-handed golfer)"
-   }
-  },
-  "lead_knee_flex_address_deg": {
-   "label": "Lead-knee flex at address",
-   "plain_name": "how bent the lead knee is at setup",
-   "event": "address",
-   "unit": "degrees",
-   "measures": "how much the lead knee is bent at the setup position",
-   "why": "knee flex at setup is part of an athletic, balanced stance",
-   "in_range_phrasing": "the lead knee is bent about as much at setup as a typical tour swing",
-   "out_low_phrasing": "the lead knee is more bent at setup than most tour swings",
-   "out_high_phrasing": "the lead knee is straighter at setup than most tour swings",
-   "glosses": {
-    "lead knee": "the knee closer to the target (left knee for a right-handed golfer)",
-    "flex": "how much a joint is bent"
-   }
-  },
-  "lead_knee_flex_impact_deg": {
-   "label": "Lead-knee flex at impact",
-   "plain_name": "how bent the lead knee is at impact",
-   "event": "impact",
-   "unit": "degrees",
-   "measures": "how much the lead knee is bent at the moment of impact",
-   "why": "many tour players straighten the lead leg into impact as part of releasing power",
-   "in_range_phrasing": "the lead knee is bent about as much at impact as a typical tour swing",
-   "out_low_phrasing": "the lead knee is more bent at impact than most tour swings",
-   "out_high_phrasing": "the lead knee is straighter at impact than most tour swings",
-   "glosses": {
-    "lead knee": "the knee closer to the target (left knee for a right-handed golfer)"
-   }
-  },
-  "hip_lateral_shift_pct": {
-   "label": "Weight shift",
-   "plain_name": "how much the hips slide toward the target",
-   "event": "impact",
-   "unit": "percent of body height",
-   "measures": "how far the hips slide sideways toward the target from setup to impact, as a share of body size",
-   "why": "some sideways hip drive toward the target is part of transferring weight through the ball",
-   "in_range_phrasing": "the hips slide toward the target about as much as a typical tour swing",
-   "out_low_phrasing": "the hips slide toward the target less than most tour swings",
-   "out_high_phrasing": "the hips slide sideways more than most tour swings",
-   "glosses": {
-    "weight shift": "moving body weight toward the target through the downswing"
-   }
-  },
-  "tempo_ratio": {
-   "label": "Tempo (backswing : downswing)",
-   "plain_name": "the rhythm of the swing",
-   "event": "overall",
-   "unit": "ratio",
-   "measures": "how long the backswing takes compared with the downswing",
-   "why": "many tour swings settle near a 3-to-1 backswing-to-downswing rhythm",
-   "in_range_phrasing": "the swing rhythm is close to the tour-typical pace",
-   "out_low_phrasing": "the backswing-to-downswing rhythm is quicker than the roughly 3-to-1 tour norm",
-   "out_high_phrasing": "the backswing is longer relative to the downswing than the roughly 3-to-1 tour norm",
-   "glosses": {
-    "tempo": "the timing and rhythm of the swing",
-    "3-to-1": "a backswing about three times as long as the downswing"
-   }
-  },
-  "hand_speed_impact_bs": {
-   "label": "Hand speed into impact",
-   "plain_name": "how fast the hands move into the ball",
-   "event": "impact",
-   "unit": "body-lengths/s",
-   "measures": "the peak speed of the hands through the hitting zone, normalized by body size",
-   "why": "faster hands into the ball generally carry more clubhead speed and distance",
-   "in_range_phrasing": "the hands move through impact at a tour-typical pace",
-   "out_low_phrasing": "the hands move into impact slower than tour-typical",
-   "out_high_phrasing": "the hands move into impact faster than tour-typical",
-   "glosses": {
-    "hand speed": "how quickly the hands travel through the hitting area, measured relative to body size"
-   }
-  }
- }
 }
