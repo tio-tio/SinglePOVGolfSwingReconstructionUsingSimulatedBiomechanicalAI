@@ -431,6 +431,20 @@ function renderResults() {
   $("#tab-chat").hidden = !chatOk;
   if (chatOk) Chat.activate(state.selectedId);
 
+  // ball-flight estimate card (simulated; same engine + nudge rule as the coach).
+  // Demo clips: tour launch numbers for the clip's club. Uploads: amateur default,
+  // club picker. Hidden on the illustrative prototype view (not this swing's data).
+  if (window.BallFlight) {
+    if (isUpload) BallFlight.unmount();
+    else {
+      const hs = isJob && (((state.bundle.scorecard || {}).indicators || {}).hand_speed_impact_bs);
+      BallFlight.mount({ club: isJob ? null : clip.club,
+                         tier: isJob ? "amateur" : "tour",
+                         metricsRows: metrics.metrics,
+                         handSpeed: hs ? { value: hs.value, median: hs.pro_median } : null });
+    }
+  }
+
   // share link + scorecard download (demo clips only — uploads have no baked card,
   // and the hash router only resolves curated clip ids)
   $("#btn-share").hidden = isUpload || isJob;
@@ -951,6 +965,10 @@ async function openJob(jobId) {
     state.upload = null;
     setHash(null);                             // job ids aren't hash-routable (yet)
     const bundle = await loadClipBundle(jobId, `${window.RESULTS_BASE}/${jobId}`);
+    // full scorecard (published since image v10; absent on older jobs) — the
+    // ball-flight card nudges by its hand-speed indicator
+    bundle.scorecard = await fetch(`${window.RESULTS_BASE}/${jobId}/scorecard.json`)
+      .then(r => r.json()).catch(() => null);
     if (seq !== navSeq) return;
     state.bundle = bundle;
     renderResults();
