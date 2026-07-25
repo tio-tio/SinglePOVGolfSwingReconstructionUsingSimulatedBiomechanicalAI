@@ -37,8 +37,11 @@ import subprocess
 import threading
 from pathlib import Path
 
+
 PROJECT_ROOT = Path(__file__).parent.parent
 KB_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_kb.json"
+PERSONAS_DIR = PROJECT_ROOT / "Data" / "coaching" / "personas"
+DEFAULT_PERSONA = "traditional"
 CODEX_BIN = shutil.which("codex.cmd") or shutil.which("codex") or "codex"
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 
@@ -110,27 +113,134 @@ OUTPUT_SCHEMA = {
 def load_kb() -> dict:
     return json.loads(KB_PATH.read_text(encoding="utf-8"))
 
+def load_persona(persona_name: str = DEFAULT_PERSONA) -> str:
+    """Load a coaching persona by its safe file name."""
+    safe_name = Path(persona_name).stem
+
+    if safe_name != persona_name:
+        raise ValueError(f"Invalid persona name: {persona_name}")
+
+    persona_path = PERSONAS_DIR / f"{safe_name}.md"
+
+    if not persona_path.exists():
+        available = sorted(path.stem for path in PERSONAS_DIR.glob("*.md"))
+        raise FileNotFoundError(
+            f"Persona '{persona_name}' was not found. "
+            f"Available personas: {', '.join(available)}"
+        )
+
+    return persona_path.read_text(encoding="utf-8").strip()
 
 def build_kb_block(kb: dict) -> str:
-    """The full KB as a stable string (identical across every clip → cacheable
-    on the Anthropic backend). We send all cards so the prefix never changes;
-    the model is told to use only the cards for the indicators it's shown."""
-    lines = ["KNOWLEDGE BASE — use only this wording for golf terms.\n", "GLOSSARY:"]
-    for term, gloss in kb["glossary"].items():
+    """Build the stable knowledge-base prompt sent to the LLM.
+
+    Supports both the original 0.1 KB fields and the expanded 0.2 fields
+    generated from the Markdown knowledge cards.
+    """
+    lines = [
+        "KNOWLEDGE BASE — use only these definitions and interpretation rules.",
+        "Describe measured movement neutrally. Do not invent causes, diagnoses, "
+        "shot outcomes, corrections, or ideal targets.",
+        "",
+        "GLOSSARY:",
+    ]
+
+    for term, gloss in kb.get("glossary", {}).items():
         lines.append(f"  - {term}: {gloss}")
+
     lines.append("\nINDICATOR CARDS:")
-    for key, c in kb["indicators"].items():
-        lines.append(f"\n[{key}] {c['label']} ({c['plain_name']}) — event: {c['event']}, unit: {c['unit']}")
-        lines.append(f"  measures: {c['measures']}")
-        lines.append(f"  why: {c['why']}")
-        lines.append(f"  in_range: {c['in_range_phrasing']}")
-        if c.get("out_low_phrasing"):
-            lines.append(f"  if_below_range: {c['out_low_phrasing']}")
-        if c.get("out_high_phrasing"):
-            lines.append(f"  if_above_range: {c['out_high_phrasing']}")
-        if c.get("glosses"):
-            for t, g in c["glosses"].items():
-                lines.append(f"  gloss[{t}]: {g}")
+
+    for key, card in kb.get("indicators", {}).items():
+        lines.append(
+            f"\n[{key}] {card.get('label', key)} "
+            f"({card.get('plain_name', '')}) — "
+            f"event: {card.get('event', '')}, "
+            f"unit: {card.get('unit', '')}"
+        )
+
+        if card.get("measures"):
+            lines.append(f"  measures: {card['measures']}")
+
+        if card.get("beginner_explanation"):
+            lines.append(
+                f"  beginner_explanation: {card['beginner_explanation']}"
+            )
+
+        if card.get("why"):
+            lines.append(f"  why: {card['why']}")
+
+        if card.get("handedness_note"):
+            lines.append(
+                f"  handedness_note: {card['handedness_note']}"
+            )
+
+        evidence = card.get("evidence_classification", {})
+        if evidence:
+            if evidence.get("directly_measured"):
+                lines.append(
+                    "  directly_measured: "
+                    f"{evidence['directly_measured']}"
+                )
+
+            if evidence.get("derived_comparison"):
+                lines.append(
+                    "  derived_comparison: "
+                    f"{evidence['derived_comparison']}"
+                )
+
+            if evidence.get("not_supported"):
+                lines.append(
+                    "  not_supported: "
+                    f"{evidence['not_supported']}"
+                )
+
+        if card.get("in_range_phrasing"):
+            lines.append(
+                f"  in_range: {card['in_range_phrasing']}"
+            )
+
+        if card.get("out_low_phrasing"):
+            lines.append(
+                f"  if_below_range: {card['out_low_phrasing']}"
+            )
+
+        if card.get("out_high_phrasing"):
+            lines.append(
+                f"  if_above_range: {card['out_high_phrasing']}"
+            )
+
+        comparison_language = card.get("comparison_language", [])
+        if comparison_language:
+            lines.append("  approved_comparison_language:")
+
+            for statement in comparison_language:
+                lines.append(f"    - {statement}")
+
+        limitations = card.get("limitations", [])
+        if limitations:
+            lines.append("  limitations:")
+
+            for limitation in limitations:
+                lines.append(f"    - {limitation}")
+
+        allowed_inferences = card.get("allowed_inferences", [])
+        if allowed_inferences:
+            lines.append("  allowed_inferences:")
+
+            for inference in allowed_inferences:
+                lines.append(f"    - {inference}")
+
+        prohibited_inferences = card.get("prohibited_inferences", [])
+        if prohibited_inferences:
+            lines.append("  prohibited_inferences:")
+
+            for inference in prohibited_inferences:
+                lines.append(f"    - {inference}")
+
+        if card.get("glosses"):
+            for term, gloss in card["glosses"].items():
+                lines.append(f"  gloss[{term}]: {gloss}")
+
     return "\n".join(lines)
 
 
@@ -256,13 +366,27 @@ def call_codex(prompt: str, image: str | None = None, model: str | None = None,
                 pass
 
 
-def _run_codex(sc: dict, kb: dict, image: str | None, model: str | None) -> tuple[dict, dict]:
-    prompt = RULES + "\n\n" + build_kb_block(kb) + "\n\n" + build_scorecard_text(sc)
+def _run_codex(sc: dict, kb: dict, image: str | None, model: str | None, persona_name: str,) -> tuple[dict, dict]:
+    # Replaced the original prompt assembly to include the selected coaching persona.
+    # prompt = RULES + "\n\n" + build_kb_block(kb) + "\n\n" + build_scorecard_text(sc)
+
+    persona = load_persona(persona_name)
+
+    prompt = (
+        RULES
+        + "\n\nPERSONA AND COMMUNICATION STYLE:\n"
+        + persona
+        + "\n\n"
+        + build_kb_block(kb)
+        + "\n\n"
+        + build_scorecard_text(sc)
+    )
+
     if image:
         prompt += ("\n\n(An image of the SAME swing is attached for visual context "
                    "only. Never let it override or contradict the measured metrics.)")
     out = call_codex(prompt, image=image, model=model)
-    meta = {"backend": "codex", "model": model or "codex-default", "multimodal": bool(image)}
+    meta = {"backend": "codex", "model": model or "codex-default", "multimodal": bool(image), "persona": persona_name,}
     return out, meta
 
 
@@ -271,13 +395,25 @@ def _run_codex(sc: dict, kb: dict, image: str | None, model: str | None) -> tupl
 # --------------------------------------------------------------------------- #
 
 def _run_anthropic(sc: dict, kb: dict, image: str | None, model: str,
-                   thinking: bool) -> tuple[dict, dict]:
+                   thinking: bool, persona_name: str,) -> tuple[dict, dict]:
+    
     import anthropic
+
+    persona = load_persona(persona_name)
 
     system = [
         {"type": "text", "text": RULES},
-        {"type": "text", "text": build_kb_block(kb), "cache_control": {"type": "ephemeral"}},
+        {
+            "type": "text",
+            "text": "PERSONA AND COMMUNICATION STYLE:\n" + persona,
+        },
+        {
+            "type": "text",
+            "text": build_kb_block(kb),
+            "cache_control": {"type": "ephemeral"},
+        },
     ]
+
     content: list[dict] = []
     if image:
         data = Path(image).read_bytes()
@@ -296,7 +432,7 @@ def _run_anthropic(sc: dict, kb: dict, image: str | None, model: str,
         kwargs["thinking"] = {"type": "adaptive"}
     msg = anthropic.Anthropic().messages.create(**kwargs)
     out = _coerce_json(next(b.text for b in msg.content if b.type == "text"))
-    meta = {"backend": "anthropic", "model": msg.model, "multimodal": bool(image),
+    meta = {"backend": "anthropic", "model": msg.model, "multimodal": bool(image), "persona": persona_name,
             "usage": {"input_tokens": msg.usage.input_tokens,
                       "output_tokens": msg.usage.output_tokens,
                       "cache_read_input_tokens": getattr(msg.usage, "cache_read_input_tokens", 0),
@@ -309,13 +445,13 @@ def _run_anthropic(sc: dict, kb: dict, image: str | None, model: str,
 # --------------------------------------------------------------------------- #
 
 def summarize(scorecard_json: Path, backend: str = "codex", model: str | None = None,
-              image: str | None = None, thinking: bool = True) -> dict:
+              image: str | None = None, thinking: bool = True, persona_name: str = DEFAULT_PERSONA,) -> dict:
     sc = json.loads(Path(scorecard_json).read_text(encoding="utf-8"))
     kb = load_kb()
     if backend == "anthropic":
-        out, meta = _run_anthropic(sc, kb, image, model or DEFAULT_ANTHROPIC_MODEL, thinking)
+        out, meta = _run_anthropic(sc, kb, image, model or DEFAULT_ANTHROPIC_MODEL, thinking, persona_name,)
     else:
-        out, meta = _run_codex(sc, kb, image, model)
+        out, meta = _run_codex(sc, kb, image, model, persona_name,)
 
     grounding = verify_grounding(sc, out.get("claims", []))
     sc["llm_summary_v2"] = out["explanation"]
@@ -333,21 +469,29 @@ if __name__ == "__main__":
     p.add_argument("--model", default=None, help="Override model (codex: -c model=...; anthropic: model id)")
     p.add_argument("--image", default=None, help="Optional scorecard PNG / swing frame for multimodal context")
     p.add_argument("--no-thinking", action="store_true", help="Anthropic backend: disable adaptive thinking")
-    p.add_argument("--dry-run", action="store_true",
-                   help="Assemble + print the prompt and schema; no model call")
+    p.add_argument("--dry-run", action="store_true", help="Assemble + print the prompt and schema; no model call")
+    p.add_argument("--persona",  default=DEFAULT_PERSONA,
+    help=(
+        "Persona filename without .md, such as traditional. "
+        f"Default: {DEFAULT_PERSONA}"
+        ),
+    )
     args = p.parse_args()
+    
 
     if args.dry_run:
         sc = json.loads(Path(args.scorecard).read_text(encoding="utf-8"))
         kb = load_kb()
+        persona = load_persona(args.persona)
         print("=" * 70, "\nRULES:\n", RULES[:500], "...")
+        print("=" * 70, "\nPERSONA:\n", persona[:1200], "...",)
         print("=" * 70, "\nKB BLOCK (head):\n", build_kb_block(kb)[:800], "...")
         print("=" * 70, "\nSCORECARD TEXT:\n", build_scorecard_text(sc))
         print("=" * 70, "\nOUTPUT SCHEMA:\n", json.dumps(OUTPUT_SCHEMA, indent=2))
         raise SystemExit(0)
 
     sc = summarize(Path(args.scorecard), backend=args.backend, model=args.model,
-                   image=args.image, thinking=not args.no_thinking)
+                   image=args.image, thinking=not args.no_thinking, persona_name=args.persona,)
     print("\n" + "=" * 60 + f"\nLLM SWING EXPLANATION (KB-grounded, {sc['llm_meta']['backend']})\n" + "=" * 60)
     print(sc["llm_summary_v2"])
     g = sc["llm_grounding"]
