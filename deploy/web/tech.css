@@ -1,0 +1,98 @@
+/* MotionCaddie — technical deep-dive page. Extends styles.css + landing.css tokens. */
+
+.t-crumb { max-width: 1080px; margin: 0 auto; padding: 18px 24px 0; }
+.t-crumb a { color: var(--muted); font-size: 14px; text-decoration: none; }
+.t-crumb a:hover { color: var(--green); }
+
+.t-hero { max-width: 760px; margin: 0 auto; text-align: center; padding: 28px 24px 40px; }
+.t-hero h1 { font-size: 36px; margin: 10px 0 14px; color: var(--ink); letter-spacing: -0.4px; }
+.t-hero p { color: var(--muted); font-size: 17px; margin: 0; }
+
+.t-section { max-width: 1080px; margin: 0 auto; padding: 44px 24px; border-top: 1px solid #e9ebe6; }
+.t-section:first-of-type { border-top: none; }
+.t-section h2 { font-size: 24px; margin: 0 0 8px; color: var(--ink); }
+.t-section > .t-lede { color: var(--muted); font-size: 15px; margin: 0 0 26px; max-width: 720px; }
+
+/* ---------------------------- flow diagram ---------------------------- */
+.t-flow-wrap { overflow-x: auto; padding: 4px 0 10px; }
+.t-flow-wrap svg { display: block; min-width: 920px; }
+
+/* ---------------------------- stage cards ---------------------------- */
+.t-stage {
+  display: grid; grid-template-columns: 56px 1fr; gap: 18px;
+  padding: 22px 0; border-top: 1px dashed #e3e5df;
+}
+.t-stage:first-child { border-top: none; padding-top: 0; }
+.t-stage-num {
+  width: 40px; height: 40px; border-radius: 12px; background: var(--green-soft); color: var(--green);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px;
+}
+.t-stage.llm .t-stage-num { background: var(--purple-soft); color: var(--purple); }
+.t-stage h3 { margin: 0 0 6px; font-size: 18px; color: var(--ink); }
+.t-stage .t-tag {
+  display: inline-block; font-size: 12px; font-weight: 600; color: var(--green);
+  background: var(--green-soft); padding: 3px 10px; border-radius: 999px; margin: 0 0 10px;
+}
+.t-stage.llm .t-tag { color: var(--purple); background: var(--purple-soft); }
+.t-stage p { margin: 0 0 10px; color: var(--muted); font-size: 15px; line-height: 1.55; }
+.t-stage p:last-of-type { margin-bottom: 0; }
+.t-stage code { background: var(--gray-soft); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+.t-code-link {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--green);
+  text-decoration: none; font-family: ui-monospace, "SF Mono", Menlo, monospace; margin-top: 8px;
+}
+.t-code-link:hover { text-decoration: underline; }
+
+/* callout / nuance box */
+.t-callout {
+  background: var(--amber-soft); border: 1px solid #f0dfae; border-radius: 12px;
+  padding: 14px 18px; margin-top: 12px; font-size: 14px; color: #6b5215; line-height: 1.55;
+}
+.t-callout strong { color: #4d3b0f; }
+
+/* ---------------------------- benchmark bars ---------------------------- */
+.t-bench { display: flex; flex-direction: column; gap: 14px; margin: 18px 0; }
+.t-bar-row { display: grid; grid-template-columns: 190px 1fr 70px; align-items: center; gap: 12px; }
+.t-bar-label { font-size: 14px; color: var(--ink); }
+.t-bar-label small { display: block; color: var(--muted); font-size: 12px; }
+.t-bar-track { background: var(--gray-soft); border-radius: 999px; height: 14px; overflow: hidden; }
+.t-bar-fill { height: 100%; border-radius: 999px; background: #cfd3cb; }
+.t-bar-fill.best { background: var(--green); }
+.t-bar-fill.ref { background: var(--purple); }
+.t-bar-val { font-weight: 700; color: var(--ink); font-size: 14px; text-align: right; }
+.t-bench-note { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+/* ---------------------------- indicator grid ---------------------------- */
+.t-ind-groups { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.t-ind-group { background: var(--card); border-radius: 14px; box-shadow: var(--shadow); padding: 18px 20px; }
+.t-ind-group h4 { margin: 0 0 10px; font-size: 14px; color: var(--green); text-transform: uppercase; letter-spacing: .04em; }
+.t-ind-group ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.t-ind-group li { font-size: 14px; color: var(--ink); }
+.t-ind-group li small { display: block; color: var(--muted); font-size: 12px; }
+
+/* ---------------------------- grounding violations ---------------------------- */
+.t-viol { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 18px; }
+.t-viol-card { background: #fdf3f0; border: 1px solid #f3d9d0; border-radius: 12px; padding: 14px 16px; }
+.t-viol-card .vt { font-family: ui-monospace, monospace; font-size: 12.5px; font-weight: 700; color: #a1432b; }
+.t-viol-card p { margin: 6px 0 0; font-size: 13.5px; color: #6b4a3e; line-height: 1.45; }
+
+/* ---------------------------- architecture diagram ---------------------------- */
+.t-arch-wrap { overflow-x: auto; padding: 4px 0 10px; }
+.t-arch-wrap svg { display: block; min-width: 920px; }
+.t-arch-note { font-size: 13px; color: var(--muted); margin-top: 14px; max-width: 680px; }
+
+/* ---------------------------- links footer ---------------------------- */
+.t-links { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.t-link-card {
+  display: block; background: var(--card); border-radius: 12px; box-shadow: var(--shadow);
+  padding: 16px 18px; text-decoration: none; color: inherit;
+}
+.t-link-card .tl-title { font-weight: 700; font-size: 14px; color: var(--ink); }
+.t-link-card .tl-path { font-family: ui-monospace, monospace; font-size: 12px; color: var(--green); margin-top: 4px; }
+.t-link-card .tl-desc { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+
+@media (max-width: 760px) {
+  .t-ind-groups, .t-viol, .t-links { grid-template-columns: 1fr; }
+  .t-bar-row { grid-template-columns: 1fr; gap: 4px; }
+  .t-bar-val { text-align: left; }
+}

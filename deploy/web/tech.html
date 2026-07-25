@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0c5c3a">
+<meta name="description" content="How MotionCaddie turns one phone video into a 3D-grounded coaching scorecard: 2D pose, 3D lifting, event detection, biomechanical indicators, and a grounding-verified LLM explanation.">
+<title>MotionCaddie — the pipeline, in depth</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="landing.css">
+<link rel="stylesheet" href="tech.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="about.html">
+    <img class="brand-logo" src="assets/logo.png" alt="">
+    <span class="brand-name">MotionCaddie</span>
+  </a>
+  <nav class="progress-nav" aria-label="Page">
+    <a class="btn-text" href="about.html">Overview</a>
+    <a class="btn-text" href="about.html#team">Team</a>
+  </nav>
+  <a class="btn-primary" href="portal.html" style="padding:10px 20px;font-size:14px;">Try the demo</a>
+</header>
+
+<div class="t-crumb"><a href="about.html">← Back to project overview</a></div>
+
+<main class="landing-main">
+
+  <section class="t-hero">
+    <span class="l-eyebrow">Technical deep dive</span>
+    <h1>One phone video to a coaching scorecard</h1>
+    <p>Seven stages, two trained models, and a deterministic checker that stops the LLM from
+    inventing anything. This page walks through what actually runs — architectures, numbers,
+    and the code behind them.</p>
+  </section>
+
+  <!-- ============================== pipeline flow diagram ============================== -->
+  <section class="t-section">
+    <h2>The pipeline at a glance</h2>
+    <p class="t-lede">A single 2D video becomes a 3D-grounded scorecard through five processing
+    stages plus the explanation layer.</p>
+    <div class="t-flow-wrap">
+      <svg viewBox="0 0 1140 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pipeline: upload, 2D pose, 3D lift, smoothing, event detection, coaching indicators, grounded explanation">
+        <defs>
+          <marker id="arrow" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#9AA3AE"></path>
+          </marker>
+        </defs>
+        <!-- connecting arrows -->
+        <g stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow)">
+          <line x1="145" y1="95" x2="185" y2="95"></line>
+          <line x1="310" y1="95" x2="350" y2="95"></line>
+          <line x1="475" y1="95" x2="515" y2="95"></line>
+          <line x1="640" y1="95" x2="680" y2="95"></line>
+          <line x1="805" y1="95" x2="845" y2="95"></line>
+          <line x1="970" y1="95" x2="1010" y2="95"></line>
+        </g>
+        <!-- boxes -->
+        <!-- 1 upload -->
+        <g>
+          <rect x="10" y="35" width="135" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="35" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="35" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">1</text>
+          <text x="24" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Upload</text>
+          <text x="24" y="107" font-size="10.5" fill="#6b7a72">phone video</text>
+          <text x="24" y="122" font-size="10.5" fill="#6b7a72">MP4 / MOV</text>
+        </g>
+        <!-- 2 2D pose -->
+        <g>
+          <rect x="185" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="210" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="210" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">2</text>
+          <text x="199" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">2D pose</text>
+          <text x="199" y="107" font-size="10.5" fill="#6b7a72">MediaPipe Lite</text>
+          <text x="199" y="122" font-size="10.5" fill="#6b7a72">COCO-17 / frame</text>
+        </g>
+        <!-- 3 3D lift -->
+        <g>
+          <rect x="350" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="375" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="375" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">3</text>
+          <text x="364" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">3D lift</text>
+          <text x="364" y="107" font-size="10.5" fill="#6b7a72">GolfPose MixSTE2</text>
+          <text x="364" y="122" font-size="10.5" fill="#6b7a72">243-frame window</text>
+        </g>
+        <!-- 4 smoothing -->
+        <g>
+          <rect x="515" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="540" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="540" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">4</text>
+          <text x="529" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Smoothing</text>
+          <text x="529" y="107" font-size="10.5" fill="#6b7a72">One-Euro filter</text>
+          <text x="529" y="122" font-size="10.5" fill="#6b7a72">+ bone-length lock</text>
+        </g>
+        <!-- 5 event detection -->
+        <g>
+          <rect x="680" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="705" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="705" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">5</text>
+          <text x="694" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Event</text>
+          <text x="694" y="103" font-size="12.5" font-weight="700" fill="#1d2b24">detection</text>
+          <text x="694" y="120" font-size="10.5" fill="#6b7a72">EventTCN, 0.26M</text>
+          <text x="694" y="135" font-size="10.5" fill="#6b7a72">params · 8 events</text>
+        </g>
+        <!-- 6 indicators -->
+        <g>
+          <rect x="845" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="870" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="870" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">6</text>
+          <text x="859" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Indicators</text>
+          <text x="859" y="107" font-size="10.5" fill="#6b7a72">15 biomechanical</text>
+          <text x="859" y="122" font-size="10.5" fill="#6b7a72">measures vs tour</text>
+        </g>
+        <!-- 7 explanation (purple / LLM) -->
+        <g>
+          <rect x="1010" y="35" width="125" height="120" rx="14" fill="#f2ecfc" stroke="#ddd0f5"></rect>
+          <circle cx="1035" cy="58" r="13" fill="#e3d8f7"></circle>
+          <text x="1035" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#6d4ad0">7</text>
+          <text x="1024" y="90" font-size="12.5" font-weight="700" fill="#3d2a63">Grounded</text>
+          <text x="1024" y="103" font-size="12.5" font-weight="700" fill="#3d2a63">explanation</text>
+          <text x="1024" y="120" font-size="10.5" fill="#6d4ad0">Claude + verifier</text>
+          <text x="1024" y="135" font-size="10.5" fill="#6d4ad0">checks every claim</text>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ============================== stage detail ============================== -->
+  <section class="t-section">
+    <h2>Stage by stage</h2>
+    <p class="t-lede">What each stage actually runs, and why it was chosen.</p>
+
+    <div class="t-stage">
+      <div class="t-stage-num">2</div>
+      <div>
+        <span class="t-tag">2D pose</span>
+        <h3>MediaPipe Lite finds 17 joints, every frame</h3>
+        <p>Every frame is run through MediaPipe's Lite pose model, producing COCO-17 keypoints
+        (nose, shoulders, elbows, wrists, hips, knees, ankles). Lite was picked over MediaPipe's
+        own Heavy variant on <em>measured</em> event-timing accuracy, not intuition: on our
+        benchmark, Lite scored PCE@5 0.090 vs Heavy's 0.052 — 73% better — while running 4×
+        faster.</p>
+        <div class="t-callout"><strong>Counter-intuitive finding:</strong> heavier pose models
+        apply more temporal smoothing, which slightly displaces the true peak frame in the wrist
+        trajectory used to time events. Smoother ≠ more correct for sharp event localization —
+        so the cheaper model won.</div>
+        <a class="t-code-link" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/Scripts/adapters/mediapipe_adapter.py" target="_blank" rel="noopener">Scripts/adapters/mediapipe_adapter.py →</a>
+      </div>
+    </div>
+
+    <div class="t-stage">
+      <div class="t-stage-num">3</div>
+      <div>
+        <span class="t-tag">3D lift</span>
+        <h3>GolfPose's MixSTE2 transformer reconstructs the depth</h3>
+        <p>A single camera can't see rotation about the vertical axis — the very thing that
+        matters most for a golf swing (hip-shoulder separation, X-factor). The 2D keypoints are
+        lifted into 3D by <strong>MixSTE2</strong>, a spatio-temporal transformer (embed dim 512,
+        depth 8, 8 attention heads) from the GolfPose research paper, fine-tuned on golf-specific
+        motion and pretrained with a 243-frame receptive field.</p>
+        <div class="t-callout"><strong>We didn't start here.</strong> Our first benchmark (20
+        models, ~28,000 clip runs) found the generic, mocap-pretrained <em>MotionBERT-Full</em>
+        beat GolfPose's out-of-the-box 17-keypoint variant by 2–2.4× — domain-specific
+        pretraining on a small 4-subject dataset didn't transfer well to GolfDB's resolution and
+        distribution. Later work fine-tuning GolfPose's full MixSTE2 architecture on
+        coaching-relevant motion closed that gap and became the production lifter — a case of
+        the first result being right for the model available, not the final word.</div>
+        <a class="t-code-link" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/Scripts/adapters/golfpose_adapter.py" target="_blank" rel="noopener">Scripts/adapters/golfpose_adapter.py →</a>
+      </div>
+    </div>
+
+    <div class="t-stage">
+      <div class="t-stage-num">4</div>
+      <div>
+        <span class="t-tag">Smoothing</span>
+        <h3>One-Euro filtering + a bone-length lock</h3>
+        <p>Raw 3D output is noisy frame-to-frame. A three-pass cleanup fixes it: short
+        low-confidence gaps are linearly interpolated, an adaptive <strong>One-Euro filter</strong>
+        smooths slow phases heavily while staying snappy through impact, and a
+        <strong>bone-length lock</strong> slides each joint along its parent→child direction so
+        bone length matches the clip-wide median (real bones don't change length). Measured
+        impact on a reference clip: mean acceleration dropped <strong>0.0041 → 0.0020 (−51%)</strong>.</p>
+        <a class="t-code-link" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/Scripts/smoothing.py" target="_blank" rel="noopener">Scripts/smoothing.py →</a>
+      </div>
+    </div>
+
+    <div class="t-stage">
+      <div class="t-stage-num">5</div>
+      <div>
+        <span class="t-tag">Event detection</span>
+        <h3>A trained detector finds the 8 swing events</h3>
+        <p>The 8 GolfDB swing events — <code>address, toe_up, mid_backswing, top, mid_downswing,
+        impact, mid_follow_through, finish</code> — are located by <strong>EventTCN</strong>, a
+        0.26M-parameter 1D convolutional network trained directly on 3D landmark trajectories.
+        Its 9-channel output (8 events + background) is decoded with a monotonic constraint so
+        event order can never invert. This was the single biggest accuracy win in the project.</p>
+        <div class="t-bench">
+          <div class="t-bar-row">
+            <div class="t-bar-label">Heuristic<small>wrist-Y argmin/argmax</small></div>
+            <div class="t-bar-track"><div class="t-bar-fill" style="width:19.6%"></div></div>
+            <div class="t-bar-val">0.170</div>
+          </div>
+          <div class="t-bar-row">
+            <div class="t-bar-label">GPT-5 / Codex<small>vision-only, n=32</small></div>
+            <div class="t-bar-track"><div class="t-bar-fill" style="width:29.8%"></div></div>
+            <div class="t-bar-val">0.258</div>
+          </div>
+          <div class="t-bar-row">
+            <div class="t-bar-label">SwingNet (paper)<small>published GolfDB baseline</small></div>
+            <div class="t-bar-track"><div class="t-bar-fill ref" style="width:87.8%"></div></div>
+            <div class="t-bar-val">~0.76</div>
+          </div>
+          <div class="t-bar-row">
+            <div class="t-bar-label">EventTCN (ours)<small>held-out 350 clips</small></div>
+            <div class="t-bar-track"><div class="t-bar-fill best" style="width:100%"></div></div>
+            <div class="t-bar-val">0.865</div>
+          </div>
+        </div>
+        <p class="t-bench-note">PCE@5 = % of the 8 events recovered within ±5 frames of the
+        labeled ground truth. The trained detector beats the published SwingNet baseline because
+        it consumes clean 3D landmarks instead of raw 160px video frames.</p>
+        <a class="t-code-link" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/Scripts/event_detector.py" target="_blank" rel="noopener">Scripts/event_detector.py →</a>
+      </div>
+    </div>
+
+    <div class="t-stage">
+      <div class="t-stage-num">6</div>
+      <div>
+        <span class="t-tag">Coaching indicators</span>
+        <h3>15 biomechanical measures, scored against tour pros</h3>
+        <p>At each detected event, 15 core indicators are computed directly from the 3D landmarks
+        — the rotation metrics in particular are only possible because of the 3D lift; 2D can't
+        see rotation about the vertical axis at all. Every indicator is reported as a value plus
+        a <strong>pro band</strong> (the 25th–75th percentile of the GolfDB tour-pro
+        distribution) and a confidence tier, never as a single "correct" target. A 16th indicator,
+        hand speed through impact, is added when a real-time frame rate is known (phone uploads) —
+        it's omitted for slow-motion GolfDB benchmark clips, where frame-based speed wouldn't mean
+        anything.</p>
+        <div class="t-ind-groups">
+          <div class="t-ind-group">
+            <h4>Rotation</h4>
+            <ul>
+              <li>Shoulder turn at top<small>degrees off address</small></li>
+              <li>Hip turn at top / at impact<small>degrees off address</small></li>
+              <li>X-factor at top<small>shoulder turn − hip turn</small></li>
+            </ul>
+          </div>
+          <div class="t-ind-group">
+            <h4>Posture &amp; head</h4>
+            <ul>
+              <li>Spine tilt at address / impact<small>+ posture loss between them</small></li>
+              <li>Head sway (max)<small>% of torso length</small></li>
+              <li>Head lift (max)<small>% of torso length</small></li>
+            </ul>
+          </div>
+          <div class="t-ind-group">
+            <h4>Arms, legs &amp; tempo</h4>
+            <ul>
+              <li>Lead / trail arm bend at top<small>degrees</small></li>
+              <li>Lead knee flex, address / impact<small>degrees</small></li>
+              <li>Hip lateral shift<small>weight-shift proxy, % of torso</small></li>
+              <li>Tempo ratio<small>backswing : downswing frames</small></li>
+              <li>Hand speed at impact<small>body-scales/sec — real-time uploads only</small></li>
+            </ul>
+          </div>
+        </div>
+        <a class="t-code-link" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/Scripts/coaching_indicators.py" target="_blank" rel="noopener">Scripts/coaching_indicators.py →</a>
+      </div>
+    </div>
+
+    <div class="t-stage llm">
+      <div class="t-stage-num">7</div>
+      <div>
+        <span class="t-tag">Grounded explanation</span>
+        <h3>An LLM writes the read — a verifier checks every claim</h3>
+        <p>Claude turns the scorecard into a beginner-friendly explanation under a gated feature
+        config (<code>f_strict_grounding</code>, composite score <strong>1.000</strong> on a
+        held-out 200-example set). The model also emits structured claims
+        (<code>indicator_keys</code> + claim type), which a separate, deterministic
+        <strong>grounding verifier</strong> — plain code, not another LLM call — mechanically
+        checks against the scorecard before anything reaches the golfer.</p>
+        <div class="t-viol">
+          <div class="t-viol-card"><span class="vt">unknown_metric</span><p>Claim references an
+          indicator that isn't in the scorecard at all.</p></div>
+          <div class="t-viol-card"><span class="vt">low_confidence_leakage</span><p>Claim uses a
+          measurement flagged low-confidence — those are off-limits.</p></div>
+          <div class="t-viol-card"><span class="vt">claimed_in_range_but_out</span><p>Claim says
+          "in range" but the value falls outside the tour-pro band.</p></div>
+          <div class="t-viol-card"><span class="vt">claimed_out_but_in_range</span><p>Claim flags
+          an issue for a value that's actually within the pro band.</p></div>
+        </div>
+        <p style="margin-top:14px">The design is failure-tolerant on purpose: if the LLM call
+        fails for any reason, the explanation step exits cleanly and leaves the scorecard intact
+        rather than ever showing a fabricated read.</p>
+        <a class="t-code-link" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/Scripts/coaching_explain.py" target="_blank" rel="noopener">Scripts/coaching_explain.py →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== deployment architecture ============================== -->
+  <section class="t-section">
+    <h2>How it's deployed</h2>
+    <p class="t-lede">A scale-to-zero serverless demo — no GPU, no always-on compute.</p>
+    <div class="t-arch-wrap">
+      <svg viewBox="0 0 1140 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Deployment architecture: browser to CloudFront and S3 for the static UI, and to a Lambda Function URL running a CPU container that calls the Anthropic API and caches results in S3">
+        <defs>
+          <marker id="arrow2" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#9AA3AE"></path>
+          </marker>
+        </defs>
+        <!-- Browser -->
+        <rect x="470" y="10" width="200" height="56" rx="12" fill="#1d2b24"></rect>
+        <text x="570" y="44" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">Browser</text>
+
+        <!-- arrows from browser -->
+        <path d="M520,66 C 460,110 360,110 300,124" stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)"></path>
+        <path d="M620,66 C 700,110 800,110 860,124" stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)"></path>
+
+        <!-- left branch: static UI -->
+        <rect x="150" y="128" width="230" height="56" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="265" y="152" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">CloudFront (CDN)</text>
+        <text x="265" y="168" text-anchor="middle" font-size="10.5" fill="#6b7a72">Origin Access Control</text>
+        <line x1="265" y1="184" x2="265" y2="212" stroke="#c9cdc5" stroke-width="2" marker-end="url(#arrow2)"></line>
+        <rect x="150" y="216" width="230" height="66" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="265" y="240" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">S3 — static web bucket</text>
+        <text x="265" y="257" text-anchor="middle" font-size="10.5" fill="#6b7a72">about.html · portal.html</text>
+        <text x="265" y="271" text-anchor="middle" font-size="10.5" fill="#6b7a72">styles · JS · vendor</text>
+
+        <!-- right branch: compute -->
+        <rect x="750" y="128" width="240" height="56" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="870" y="152" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">Lambda Function URL</text>
+        <text x="870" y="168" text-anchor="middle" font-size="10.5" fill="#6b7a72">CORS-enabled, reserved concurrency</text>
+        <line x1="870" y1="184" x2="870" y2="212" stroke="#c9cdc5" stroke-width="2" marker-end="url(#arrow2)"></line>
+        <rect x="740" y="216" width="260" height="80" rx="12" fill="#e6f4ec" stroke="#cfe4d8"></rect>
+        <text x="870" y="240" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0C5C3A">Container image (CPU)</text>
+        <text x="870" y="257" text-anchor="middle" font-size="10.5" fill="#33403b">cached 3D parquet → EventTCN</text>
+        <text x="870" y="271" text-anchor="middle" font-size="10.5" fill="#33403b">→ indicators → scorecard render</text>
+        <text x="870" y="285" text-anchor="middle" font-size="10.5" fill="#33403b">torch CPU · ~1–1.5 GB image</text>
+
+        <!-- branch from container -->
+        <path d="M820,296 C 780,320 740,330 700,344" stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)"></path>
+        <path d="M920,296 C 960,320 990,330 1010,344" stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)"></path>
+
+        <rect x="560" y="348" width="200" height="46" rx="11" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="660" y="367" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1d2b24">S3 — result cache</text>
+        <text x="660" y="382" text-anchor="middle" font-size="10" fill="#6b7a72">explanation + PNG, per clip</text>
+
+        <rect x="900" y="348" width="220" height="46" rx="11" fill="#f2ecfc" stroke="#ddd0f5"></rect>
+        <text x="1010" y="367" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3d2a63">Anthropic API</text>
+        <text x="1010" y="382" text-anchor="middle" font-size="10" fill="#6d4ad0">claude-opus-4-8, grounded explain</text>
+      </svg>
+    </div>
+    <p class="t-arch-note">The UI is static (S3 + CloudFront). The compute path is a single
+    container-image Lambda behind a Function URL — cold-starts in 10–25s, warm in ~150ms. Spend
+    is architecturally bounded: the demo only serves a curated clip allow-list, and every clip's
+    explanation is cached in S3 after its first Anthropic call, so repeat views cost $0 in tokens.
+    No GPU, no database, no always-on server.</p>
+  </section>
+
+  <!-- ============================== links ============================== -->
+  <section class="t-section">
+    <h2>Go deeper</h2>
+    <p class="t-lede">The full evaluation methodology, leaderboard, and source are in the repo.</p>
+    <div class="t-links">
+      <a class="t-link-card" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI" target="_blank" rel="noopener">
+        <div class="tl-title">Full source</div>
+        <div class="tl-path">github.com/tio-tio/…</div>
+        <div class="tl-desc">Every script, adapter, and eval used to build the pipeline.</div>
+      </a>
+      <a class="t-link-card" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/RESULTS.md" target="_blank" rel="noopener">
+        <div class="tl-title">Full evaluation writeup</div>
+        <div class="tl-path">RESULTS.md</div>
+        <div class="tl-desc">20-model leaderboard, ~28,000 benchmark runs, caveats and honest limitations.</div>
+      </a>
+      <a class="t-link-card" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/AWS_DEPLOY_HANDOFF.md" target="_blank" rel="noopener">
+        <div class="tl-title">Deployment handoff</div>
+        <div class="tl-path">AWS_DEPLOY_HANDOFF.md</div>
+        <div class="tl-desc">The full serverless build: Lambda container, cost controls, runbook.</div>
+      </a>
+    </div>
+  </section>
+
+  <!-- ============================== final CTA ============================== -->
+  <section class="l-cta">
+    <h2>See it run on a real swing</h2>
+    <a class="btn-primary large" href="portal.html">Try the live demo →</a>
+  </section>
+
+</main>
+
+<footer class="l-footer">
+  <div>MotionCaddie — MIDS W210 Capstone, UC Berkeley School of Information, 2026.</div>
+  <div class="l-footer-links">
+    <a href="about.html">Overview</a>
+    <a href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI" target="_blank" rel="noopener">GitHub</a>
+    <a href="portal.html">Live demo</a>
+    <a href="privacy.html">Privacy</a>
+  </div>
+</footer>
+
+</body>
+</html>
