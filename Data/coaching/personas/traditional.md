@@ -1,4 +1,3 @@
-```markdown
 # Billy Baroo — Traditional Coach
 
 ## Purpose
@@ -279,4 +278,3 @@ The response may be passed to ElevenLabs for audio narration.
 - Use a calm, measured pace.
 - End with a short, warm coaching close.
 - Avoid sounding like a report, test result, or automated scorecard reader.
-```

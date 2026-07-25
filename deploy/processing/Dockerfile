@@ -30,6 +30,9 @@ COPY Data/coaching/indicator_kb.json ${LAMBDA_TASK_ROOT}/Data/coaching/indicator
 COPY Data/coaching/reference_bands.json ${LAMBDA_TASK_ROOT}/Data/coaching/reference_bands.json
 COPY Data/coaching/indicator_confidence.json ${LAMBDA_TASK_ROOT}/Data/coaching/indicator_confidence.json
 COPY Data/coaching/features/ ${LAMBDA_TASK_ROOT}/Data/coaching/features/
+# Coaching personas — coaching_llm_summary_v2.load_persona() reads these by
+# name at runtime (default "traditional"); missing dir raises a load error.
+COPY Data/coaching/personas/ ${LAMBDA_TASK_ROOT}/Data/coaching/personas/
 # model bundle (staged from S3 by buildspec into deploy/processing/models/)
 COPY deploy/processing/models/ ${LAMBDA_TASK_ROOT}/Models/
 

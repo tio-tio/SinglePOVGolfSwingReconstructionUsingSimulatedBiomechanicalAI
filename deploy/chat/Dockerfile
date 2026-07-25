@@ -26,10 +26,14 @@ ENV APP_ROOT=/var/task
 COPY deploy/chat_handler.py                 ${LAMBDA_TASK_ROOT}/chat_handler.py
 COPY Scripts/coaching_chat.py               ${LAMBDA_TASK_ROOT}/Scripts/coaching_chat.py
 COPY Scripts/coaching_llm_summary_v2.py     ${LAMBDA_TASK_ROOT}/Scripts/coaching_llm_summary_v2.py
+COPY Scripts/coaching_persona.py            ${LAMBDA_TASK_ROOT}/Scripts/coaching_persona.py
 COPY Scripts/ball_flight.py                 ${LAMBDA_TASK_ROOT}/Scripts/ball_flight.py
 
 # KB (indicator glossary/explainer cards) — loaded relative to the v2 module.
 COPY Data/coaching/indicator_kb.json        ${LAMBDA_TASK_ROOT}/Data/coaching/indicator_kb.json
+# Coaching personas — coaching_chat.load_persona() reads these by name at
+# runtime (default "traditional"); missing dir raises PersonaLoadError.
+COPY Data/coaching/personas/                ${LAMBDA_TASK_ROOT}/Data/coaching/personas/
 # Phys-NN ball-flight weights (envelope-gated; ball_flight.py falls back to
 # Phys-Q polynomials when absent)
 COPY Data/coaching/ball_flight_nn.json      ${LAMBDA_TASK_ROOT}/Data/coaching/ball_flight_nn.json
