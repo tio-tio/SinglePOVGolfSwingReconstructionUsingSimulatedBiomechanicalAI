@@ -33,7 +33,9 @@ from typing import Any, Callable
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
+
 import coaching_llm_summary_v2 as v2  # KB loader + KB block builder (no clip numbers)
+from coaching_persona import DEFAULT_PERSONA, load_persona #Loads the narration persona
 import ball_flight as BF  # physics ball-flight sim (McNally CVPR'23W baseline)
 
 KB_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_kb.json"
@@ -465,10 +467,17 @@ for golf terms."""
 
 
 def build_system(ctx: SwingContext) -> list[dict]:
-    """System as two blocks: rules + the stable KB definitions (cacheable prefix)."""
+    """Build the chat system prompt from rules, persona, and KB."""
+    persona_block = load_persona(DEFAULT_PERSONA)
+
     return [
         {"type": "text", "text": SYSTEM_RULES},
-        {"type": "text", "text": v2.build_kb_block(ctx.kb), "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": persona_block},
+        {
+            "type": "text",
+            "text": v2.build_kb_block(ctx.kb),
+            "cache_control": {"type": "ephemeral"},
+        },
     ]
 
 

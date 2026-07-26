@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0c5c3a">
+<meta name="description" content="MotionCaddie reconstructs a golfer's 3D swing from a single phone video and turns it into tour-referenced, plain-English coaching — no marker suit, no multi-camera rig.">
+<title>MotionCaddie — 3D swing analysis from one phone video</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="landing.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="about.html">
+    <img class="brand-logo" src="assets/logo.png" alt="">
+    <span class="brand-name">MotionCaddie</span>
+  </a>
+  <nav class="progress-nav" aria-label="Page">
+    <a class="btn-text" href="#problem">Problem</a>
+    <a class="btn-text" href="#how-it-works">How it works</a>
+    <a class="btn-text" href="#results">Results</a>
+    <a class="btn-text" href="#team">Team</a>
+  </nav>
+  <a class="btn-primary" href="portal.html" style="padding:10px 20px;font-size:14px;">Try the demo</a>
+</header>
+
+<main class="landing-main">
+
+  <!-- ============================== hero ============================== -->
+  <section class="l-hero">
+    <span class="l-eyebrow">MIDS W210 Capstone · UC Berkeley School of Information</span>
+    <h1>See your golf swing in 3D<br>from <em>one</em> phone video.</h1>
+    <p class="l-hero-sub">MotionCaddie reconstructs a full 3D swing from a single 2D clip, measures
+    it against tour-pro reference ranges, and explains what it found in plain English — grounded
+    only in what was actually measured, never invented advice.</p>
+    <div class="l-hero-ctas">
+      <a class="btn-primary large" href="portal.html">Try the live demo</a>
+      <a class="btn-secondary large" href="tech.html">See the pipeline in depth</a>
+    </div>
+  </section>
+
+  <!-- ============================== problem ============================== -->
+  <section class="l-section" id="problem">
+    <div class="l-section-head">
+      <h2>Swing feedback that needs data shouldn't need a lab</h2>
+      <p>Objective, biomechanical feedback on a golf swing — not just "your shoulders open early" but
+      an actual number for it — has always needed equipment most golfers never get access to.</p>
+    </div>
+    <div class="l-problem-grid">
+      <div class="card bad">
+        <h3>What it takes today</h3>
+        <p>Multi-camera launch monitors, marker suits, or an in-person session with a biomechanics
+        coach. A single phone video, on its own, has no depth — so the 3D angles that actually
+        matter (hip-shoulder separation, posture, weight shift) can't be measured from it directly.</p>
+      </div>
+      <div class="card good">
+        <h3>What golfers actually have</h3>
+        <p>A phone. That's it. Amateur players and coaches who want objective, repeatable feedback
+        need a way to get real 3D biomechanical measurement out of ordinary 2D video — without
+        buying anything or booking a lab session.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== solution / features ============================== -->
+  <section class="l-section" id="solution">
+    <div class="l-section-head">
+      <h2>What MotionCaddie does</h2>
+      <p>Upload one clip. Get a 3D replay, a tour-referenced scorecard, and a coach that only talks
+      about what was measured.</p>
+    </div>
+    <div class="l-features">
+      <div class="card l-feature">
+        <div class="l-feature-icon" aria-hidden="true">⛳</div>
+        <h3>3D from a single camera</h3>
+        <p>A 2D pose model finds every joint in the frame, then a 3D lifting model reconstructs the
+        depth a flat video can't show — no extra hardware.</p>
+      </div>
+      <div class="card l-feature">
+        <div class="l-feature-icon" aria-hidden="true">📐</div>
+        <h3>Tour-referenced indicators</h3>
+        <p>Tempo, X-factor, posture, weight shift and more, computed at each swing event and scored
+        against a tour-pro reference distribution.</p>
+      </div>
+      <div class="card l-feature">
+        <div class="l-feature-icon" aria-hidden="true">💬</div>
+        <h3>A coach that won't make things up</h3>
+        <p>The explanation layer is only allowed to describe measured numbers. A grounding verifier
+        checks every claim before it reaches the golfer.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== how it works ============================== -->
+  <section class="l-section" id="how-it-works">
+    <div class="l-section-head">
+      <h2>How it works</h2>
+      <p>One phone video goes through five stages to become a coaching scorecard.</p>
+    </div>
+    <div class="l-pipeline">
+      <div class="l-step">
+        <div class="l-step-num">1</div>
+        <h4>2D pose</h4>
+        <p>MediaPipe locates every joint, every frame.</p>
+      </div>
+      <span class="l-step-arrow" aria-hidden="true">→</span>
+      <div class="l-step">
+        <div class="l-step-num">2</div>
+        <h4>3D lift</h4>
+        <p>A pose-lifting model reconstructs the depth a single camera can't see.</p>
+      </div>
+      <span class="l-step-arrow" aria-hidden="true">→</span>
+      <div class="l-step">
+        <div class="l-step-num">3</div>
+        <h4>Event detection</h4>
+        <p>A trained model finds address, top, impact and follow-through.</p>
+      </div>
+      <span class="l-step-arrow" aria-hidden="true">→</span>
+      <div class="l-step">
+        <div class="l-step-num">4</div>
+        <h4>Indicators</h4>
+        <p>15 biomechanical measurements, scored against tour reference.</p>
+      </div>
+      <span class="l-step-arrow" aria-hidden="true">→</span>
+      <div class="l-step">
+        <div class="l-step-num">5</div>
+        <h4>Grounded explanation</h4>
+        <p>An LLM writes a plain-English read, verified against the numbers.</p>
+      </div>
+    </div>
+    <p class="l-note"><a href="tech.html">Read the full technical deep dive — model architectures, benchmark numbers, and the grounding verifier →</a></p>
+  </section>
+
+  <!-- ============================== results ============================== -->
+  <section class="l-section" id="results">
+    <div class="l-section-head">
+      <h2>Where the accuracy comes from</h2>
+      <p>The event detector — the model that finds address, top, impact and follow-through — was
+      the project's biggest technical win.</p>
+    </div>
+    <div class="l-stats">
+      <div class="card l-stat">
+        <div class="num">0.865</div>
+        <div class="label">PCE@5 on held-out swing-event detection — beats the published GolfDB SwingNet baseline (~0.76)</div>
+      </div>
+      <div class="card l-stat">
+        <div class="num">15</div>
+        <div class="label">Biomechanical indicators computed per swing and scored against tour-pro reference ranges</div>
+      </div>
+      <div class="card l-stat">
+        <div class="num">0<small>%</small></div>
+        <div class="label">Invented advice — every coaching claim is checked against the measured numbers before it's shown</div>
+      </div>
+    </div>
+    <p class="l-note">Evaluated on 1,400 labeled clips from GolfDB across ~28,000 model × clip runs
+    comparing pose backbones, 3D lifters, and event detectors. Full methodology and the complete
+    leaderboard are in the repo's <a href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/RESULTS.md" target="_blank" rel="noopener">RESULTS.md</a>.</p>
+  </section>
+
+  <!-- ============================== team ============================== -->
+  <section class="l-section" id="team">
+    <div class="l-section-head">
+      <h2>Team</h2>
+      <p>MIDS W210 Capstone Project, UC Berkeley School of Information — 2026</p>
+    </div>
+    <div class="l-team">
+      <div class="card l-person">
+        <div class="l-avatar" aria-hidden="true">AL</div>
+        <h3>Austin Lee</h3>
+      </div>
+      <div class="card l-person">
+        <div class="l-avatar" aria-hidden="true">BS</div>
+        <h3>Banjot Saini</h3>
+      </div>
+      <div class="card l-person">
+        <div class="l-avatar" aria-hidden="true">TH</div>
+        <h3>Theodore Hui</h3>
+      </div>
+      <div class="card l-person">
+        <div class="l-avatar" aria-hidden="true">LJ</div>
+        <h3>Lawrence Jordan</h3>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== final CTA ============================== -->
+  <section class="l-cta">
+    <h2>Ready to see your swing measured?</h2>
+    <p>Upload a clip or open one of the pre-analyzed demo swings.</p>
+    <a class="btn-primary large" href="portal.html">Try the live demo →</a>
+  </section>
+
+</main>
+
+<footer class="l-footer">
+  <div>MotionCaddie — MIDS W210 Capstone, UC Berkeley School of Information, 2026.</div>
+  <div class="l-footer-links">
+    <a href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI" target="_blank" rel="noopener">GitHub</a>
+    <a href="portal.html">Live demo</a>
+    <a href="privacy.html">Privacy</a>
+  </div>
+</footer>
+
+</body>
+</html>

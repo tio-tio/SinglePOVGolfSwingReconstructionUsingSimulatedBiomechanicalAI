@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  MotionCaddie web-hosting tier (Phase 1 of deploy/web/DEPLOYMENT_PLAN.md) —
+  MotionCaddie web-hosting tier (Phase 1 of deploy/DEPLOYMENT_PLAN.md) —
   a private S3 bucket for the static deploy/web/ site, served over HTTPS via
   CloudFront with Origin Access Control. Separate from full_app.yaml's data
   bucket: this bucket holds only site files (html/css/js/assets), never user

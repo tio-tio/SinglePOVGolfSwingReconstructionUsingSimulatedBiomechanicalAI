@@ -1,0 +1,97 @@
+/* MotionCaddie — landing page only. Extends styles.css design tokens. */
+
+.landing-main { max-width: 1080px; }
+
+/* ------------------------------- hero ------------------------------- */
+.l-hero { text-align: center; padding: 56px 0 40px; }
+.l-eyebrow {
+  display: inline-block; font-size: 13px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--green); background: var(--green-soft);
+  padding: 6px 14px; border-radius: 999px; margin-bottom: 18px;
+}
+.l-hero h1 { font-size: 44px; line-height: 1.15; margin: 0 0 16px; letter-spacing: -0.6px; color: var(--ink); }
+.l-hero h1 em { font-style: normal; color: var(--green); }
+.l-hero-sub { max-width: 620px; margin: 0 auto 28px; color: var(--muted); font-size: 18px; }
+.l-hero-ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn-primary.large, .btn-secondary.large { padding: 15px 32px; font-size: 16px; }
+a.btn-primary, a.btn-secondary { text-decoration: none; display: inline-block; }
+
+/* ----------------------------- sections ------------------------------ */
+.l-section { padding: 52px 0; border-top: 1px solid #e9ebe6; }
+.l-section:first-of-type { border-top: none; }
+.l-section-head { max-width: 640px; margin: 0 auto 32px; text-align: center; }
+.l-section-head h2 { font-size: 28px; margin: 0 0 10px; color: var(--ink); }
+.l-section-head p { color: var(--muted); font-size: 16px; margin: 0; }
+
+/* problem */
+.l-problem-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; max-width: 900px; margin: 0 auto; }
+.l-problem-grid .card { padding: 26px; }
+.l-problem-grid h3 { margin: 0 0 8px; font-size: 17px; color: var(--ink); }
+.l-problem-grid p { margin: 0; color: var(--muted); font-size: 15px; }
+.l-problem-grid .bad h3 { color: #b0492f; }
+.l-problem-grid .good h3 { color: var(--green); }
+
+/* feature cards */
+.l-features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.l-feature { padding: 26px; }
+.l-feature-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 46px; height: 46px; border-radius: 12px; background: var(--green-soft);
+  color: var(--green); font-size: 22px; margin-bottom: 14px;
+}
+.l-feature h3 { margin: 0 0 8px; font-size: 16px; }
+.l-feature p { margin: 0; color: var(--muted); font-size: 14px; }
+
+/* pipeline steps */
+.l-pipeline { display: flex; gap: 0; flex-wrap: wrap; justify-content: center; counter-reset: step; }
+.l-step {
+  flex: 1 1 160px; max-width: 190px; text-align: center; padding: 0 12px; position: relative;
+}
+.l-step-num {
+  width: 34px; height: 34px; border-radius: 50%; background: var(--green); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+  margin: 0 auto 12px;
+}
+.l-step h4 { margin: 0 0 6px; font-size: 14px; color: var(--ink); }
+.l-step p { margin: 0; font-size: 13px; color: var(--muted); }
+.l-step-arrow { align-self: center; color: #cfd3cb; font-size: 20px; margin: 0 -4px; padding-top: 6px; }
+
+/* results / stats */
+.l-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.l-stat { padding: 26px; text-align: center; }
+.l-stat .num { font-size: 34px; font-weight: 700; color: var(--green); letter-spacing: -0.5px; }
+.l-stat .num small { font-size: 16px; font-weight: 600; }
+.l-stat .label { margin-top: 6px; font-size: 14px; color: var(--muted); }
+.l-note { max-width: 640px; margin: 24px auto 0; text-align: center; color: var(--muted); font-size: 14px; }
+
+/* team */
+.l-team { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; max-width: 1000px; margin: 0 auto; }
+.l-person { padding: 24px; text-align: center; }
+.l-avatar {
+  width: 56px; height: 56px; border-radius: 50%; background: var(--green-soft); color: var(--green);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px;
+  margin: 0 auto 12px;
+}
+.l-person h3 { margin: 0; font-size: 15px; }
+.l-person p { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+.l-program { text-align: center; margin: 26px auto 0; max-width: 520px; color: var(--muted); font-size: 14px; }
+
+/* final CTA */
+.l-cta { text-align: center; padding: 56px 0 64px; }
+.l-cta h2 { font-size: 26px; margin: 0 0 10px; color: var(--ink); }
+.l-cta p { color: var(--muted); margin: 0 0 24px; }
+
+/* footer */
+.l-footer {
+  border-top: 1px solid #e9ebe6; padding: 26px 24px 40px; text-align: center;
+  color: var(--muted); font-size: 13px;
+}
+.l-footer a { color: var(--muted); }
+.l-footer .l-footer-links { margin-top: 8px; display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+  .l-hero h1 { font-size: 32px; }
+  .l-problem-grid, .l-features, .l-stats, .l-team { grid-template-columns: 1fr; }
+  .l-pipeline { flex-direction: column; align-items: center; }
+  .l-step-arrow { transform: rotate(90deg); margin: 4px 0; }
+}
