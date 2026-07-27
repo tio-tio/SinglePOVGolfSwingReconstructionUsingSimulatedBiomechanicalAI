@@ -30,6 +30,8 @@ import cv2
 import numpy as np
 import pandas as pd
 
+from video_orientation import open_capture
+
 # -------------------------------------------------------------------------
 # Canonical 17-keypoint COCO schema
 # -------------------------------------------------------------------------
@@ -262,7 +264,7 @@ class BaseAdapter(ABC):
 # -------------------------------------------------------------------------
 
 def video_info(video_path: str | Path) -> dict:
-    cap = cv2.VideoCapture(str(video_path))
+    cap = open_capture(video_path)
     if not cap.isOpened():
         raise IOError(f"Cannot open {video_path}")
     info = {
@@ -276,8 +278,13 @@ def video_info(video_path: str | Path) -> dict:
 
 
 def iter_frames(video_path: str | Path, rgb: bool = True):
-    """Yield (frame_idx, frame_array). frame is HxWxC, dtype uint8."""
-    cap = cv2.VideoCapture(str(video_path))
+    """Yield (frame_idx, frame_array). frame is HxWxC, dtype uint8.
+
+    Upright: phone clips carry their rotation in a display matrix, and a pose
+    model handed a golfer lying on their side detects badly. See
+    video_orientation.
+    """
+    cap = open_capture(video_path)
     if not cap.isOpened():
         raise IOError(f"Cannot open {video_path}")
     idx = 0

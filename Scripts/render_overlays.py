@@ -28,6 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 from eval_utils import COCO17_IDX, COCO17_NAMES
+from video_orientation import open_capture
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR     = PROJECT_ROOT / "Data"
@@ -106,7 +107,7 @@ def render_overlay(clip_id: int, model_name: str, label: str | None = None) -> P
     tmp_path = out_subdir / f"{clip_id}_{model_name}_tmp.mp4"
     final_path = out_subdir / f"{clip_id}_{model_name}.mp4"
 
-    cap = cv2.VideoCapture(str(video_path))
+    cap = open_capture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))

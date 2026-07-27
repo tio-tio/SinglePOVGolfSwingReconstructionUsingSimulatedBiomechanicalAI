@@ -35,6 +35,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 from eval_utils import COCO17_NAMES, COCO17_IDX
+from video_orientation import open_capture
 
 L_SH, R_SH = COCO17_IDX["left_shoulder"], COCO17_IDX["right_shoulder"]
 L_WR, R_WR = COCO17_IDX["left_wrist"], COCO17_IDX["right_wrist"]
@@ -367,7 +368,7 @@ def write_pose_debug_overlay(video_path: Path, landmarks_2d_parquet: Path,
     if diag is not None:
         swap_frames = set(diag.get("swaps", {}).get("wrist", {}).get("swap_frames", []))
 
-    cap = cv2.VideoCapture(str(video_path))
+    cap = open_capture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))

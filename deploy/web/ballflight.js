@@ -171,16 +171,21 @@ const BallFlight = (() => {
   }
 
   /* ------------------------------- card UI -------------------------------- */
-  function arcSVG(traj, carry, apex) {
+  /* One scale for BOTH axes, so the drawing has the flight's real proportions.
+   * Scaling x and y independently stretched every trajectory to fill the box,
+   * which drew a towering rainbow for a flat 190 yd drive and an identical
+   * rainbow for a 60 yd apex wedge — the shape carried no information at all. */
+  function arcSVG(traj, carry, apex, label) {
     const W = 300, H = 96, PAD = 10, GY = H - 16;
     const maxX = Math.max(...traj.map(p => p[0])) || 1;
     const maxY = Math.max(...traj.map(p => p[1])) || 1;
-    const sx = x => PAD + (x / maxX) * (W - 2 * PAD);
-    const sy = y => GY - (y / maxY) * (GY - PAD);
+    const k = Math.min((W - 2 * PAD) / maxX, (GY - PAD) / maxY);
+    const sx = x => PAD + x * k;
+    const sy = y => GY - y * k;
     const path = traj.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join(" ");
     const land = traj[traj.length - 1];
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:360px;display:block" role="img"
-      aria-label="Simulated ball flight: about ${Math.round(carry)} yards carry, apex ${Math.round(apex)} yards">
+      aria-label="${label || "Simulated"} ball flight drawn to scale: about ${Math.round(carry)} yards carry, apex ${Math.round(apex)} yards">
       <line x1="${PAD}" y1="${GY}" x2="${W - PAD}" y2="${GY}" stroke="currentColor" stroke-opacity=".25"/>
       <path d="${path}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-opacity=".8"/>
       <circle cx="${sx(land[0])}" cy="${sy(land[1])}" r="2.6" fill="currentColor"/>
@@ -197,9 +202,12 @@ const BallFlight = (() => {
     const dir = az > 3 ? `${Math.abs(az).toFixed(0)}° right`
       : az < -3 ? `${Math.abs(az).toFixed(0)}° left` : "straight";
     const ci = (ball.ci_10_90 || {}).carry_yd;
+    // Show the range on BOTH tiers: a single-camera fit pins the flight's shape
+    // far better than its scale, and hiding that made the number look surveyed.
+    const range = ci ? ` <span class="muted small">(${Math.round(ci[0])}–${Math.round(ci[1])} yd)</span>` : "";
     const carry = q === "measured"
-      ? `<strong>${fl.carry_yd} yd carry</strong>${ci ? ` <span class="muted small">(${Math.round(ci[0])}–${Math.round(ci[1])})</span>` : ""}`
-      : `<strong>≈${fl.carry_yd} yd carry</strong> <span class="muted small">(estimated)</span>`;
+      ? `<strong>${fl.carry_yd} yd carry</strong>${range}`
+      : `<strong>≈${fl.carry_yd} yd carry</strong>${range} <span class="muted small">(estimated)</span>`;
     const speed = q === "measured"
       ? `${fit.ball_speed_mph} mph ball speed` : `ball speed assumed (${fit.ball_speed_mph} mph)`;
     return `
@@ -248,7 +256,8 @@ const BallFlight = (() => {
     if (ball && Array.isArray(ball.trajectory_world) && ball.trajectory_world.length > 2) {
       const traj = ball.trajectory_world.map(p => [p[0], p[1]]);
       card.querySelector("#bf-measured-arc").innerHTML =
-        arcSVG(traj, ball.flight.carry_yd, ball.flight.apex_yd);
+        arcSVG(traj, ball.flight.carry_yd, ball.flight.apex_yd,
+               ball.quality === "measured" ? "Measured" : "Measured-launch");
     }
 
     const render = async () => {

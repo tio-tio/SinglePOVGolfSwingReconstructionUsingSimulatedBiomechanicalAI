@@ -25,6 +25,7 @@ is a small built-in Nelder-Mead so the cloud image needs no scipy.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 import math
@@ -35,12 +36,25 @@ import cv2
 import numpy as np
 
 from ball_flight import CLUB_DEFAULTS, simulate_flight, normalize_club
+from video_orientation import open_capture
 
 YD_M = 0.9144
 DEFAULT_F_PX = 910.0        # ~26 mm-equiv phone lens on a 720x1280 portrait video
 F_PX_JITTER = 0.08          # focal prior uncertainty folded into the bootstrap
 MEASURED_MIN_PTS = 15
 PARTIAL_MIN_PTS = 8
+PITCH_CLAMP_RAD = math.radians(25.0)
+SPEED_GRID = tuple(range(60, 211, 10))      # mph, the profiled scale direction
+SPEED_PRIOR_SIGMA = 0.15                    # 1 sigma on log(speed / club envelope)
+SPEED_PRIOR_WEIGHT_PX = 1.5                 # pixel-equivalent cost of a 1-sigma miss
+BAND_DELTA_PX = 1.0                         # profile width that defines the band
+BAND_MEASURED_FRAC = 0.28                   # carry band this wide => speed is measured
+ANCHOR_JITTER = 0.10                        # depth-anchor (golfer height / focal) prior
+MAX_FIT_RESIDUAL_PX = 6.0                   # above this the "track" is not a ball flight
+MAX_CANDIDATES = 10                         # tracks re-ranked by ballistic fit
+PREFIX_HEAD_PTS = 10                        # vetted head the flight is anchored on
+PREFIX_GROW_TOL_PX = 7.0                    # how far a later point may stray
+MAX_LAUNCH_DT_S = 0.12                      # flight must start at impact
 
 
 # --------------------------------------------------------------------------
@@ -84,34 +98,66 @@ def impact_from_pose(pose: dict[int, list[tuple[float, float]]]) -> int | None:
 # 2D tracking (R5 discriminator stack + subpixel + predictive extension)
 # --------------------------------------------------------------------------
 
-def _aligned_grays(video: str | Path, lo: int, hi: int, ref_frame: int):
-    cap = cv2.VideoCapture(str(video))
+def _aligned_grays(video: str | Path, lo: int, hi: int, ref_frame: int,
+                   clahe: bool = True):
+    """Decode [lo, hi) as grayscale, stabilise onto ref_frame.
+
+    Preprocessing that matters for a 3-6 px backlit ball (L3):
+      * sequential decode — per-frame POS_FRAMES seeking is slow and, on some
+        phone H.264/HEVC files, lands on the wrong frame;
+      * CLAHE — the ball is a faint dot against a dark range at these venues,
+        and local contrast equalisation lifts it well clear of the diff floor;
+      * Hanning-windowed phase correlation — without a window the FFT sees the
+        frame edges as a step discontinuity, and the resulting shift error
+        smears every high-contrast structure (netting, rails) into the
+        median-diff as ball-sized clutter.
+    """
+    cap = open_capture(video)
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    lo, hi = max(0, lo), min(total, hi)
+    eq = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)) if clahe else None
     grays = {}
-    for i in range(max(0, lo), min(total, hi)):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, i)
-        ok, f = cap.read()
-        if ok:
-            grays[i] = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, lo)
+    for i in range(lo, hi):
+        ok, f = cap.read()                      # sequential: no per-frame seek
+        if not ok:
+            break
+        g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+        grays[i] = eq.apply(g) if eq is not None else g
     cap.release()
+    if ref_frame not in grays:
+        ref_frame = min(grays, key=lambda k: abs(k - ref_frame))
+    win = cv2.createHanningWindow((W, H), cv2.CV_32F)
     ref = np.float32(grays[ref_frame])
     aligned = {}
     for i, g in grays.items():
-        shift, _ = cv2.phaseCorrelate(ref, np.float32(g))
+        shift, _ = cv2.phaseCorrelate(ref, np.float32(g), win)
         M = np.float32([[1, 0, -shift[0]], [0, 1, -shift[1]]])
         aligned[i] = cv2.warpAffine(g, M, (W, H))
     return aligned, W, H, fps
 
 
+def _cells(tr, q=8):
+    return {(f, int(x / q), int(y / q)) for f, x, y in tr}
+
+
+def _same_chain(a: set, b: set) -> bool:
+    """Two candidate tracks are the same physical chain if their points largely
+    coincide (keying on the start pixel alone lets one chain fill the whole
+    shortlist and pushes the real ball off it)."""
+    return len(a & b) >= 0.5 * min(len(a), len(b))
+
+
 def track_ball(video: str | Path, impact: int,
                pose: dict[int, list[tuple[float, float]]],
-               n_after: int = 90) -> dict:
+               n_after: int = 90, clahe: bool = True) -> dict:
     """Detect + link the ball track after impact. Returns dict with the
     subpixel track, launch origin, and diagnostics."""
-    aligned, W, H, fps = _aligned_grays(video, impact - 8, impact + n_after, impact)
+    aligned, W, H, fps = _aligned_grays(video, impact - 8, impact + n_after, impact,
+                                        clahe=clahe)
     frames_sorted = sorted(aligned)
     med = np.median(np.stack([aligned[i] for i in frames_sorted]), axis=0)
     med16 = med.astype(np.int16)
@@ -122,7 +168,7 @@ def track_ball(video: str | Path, impact: int,
         return (min(xs) - 70, min(ys) - 70, max(xs) + 70, max(ys) + 70)
 
     # per-frame small moving blobs: median-diff AND consecutive-diff
-    cands: dict[int, list[tuple[float, float, int]]] = {}
+    masks: dict[int, np.ndarray] = {}
     prev = None
     for i in frames_sorted:
         d = np.abs(aligned[i].astype(np.int16) - med16).astype(np.uint8)
@@ -138,6 +184,15 @@ def track_ball(video: str | Path, impact: int,
         th[int(0.62 * H):, :] = 0
         th[:int(0.06 * H), :] = 0
         th[:, :12] = 0; th[:, -12:] = 0
+        masks[i] = th
+
+    # Blob gate stays tight (R5). Relaxing it to admit motion-streaks and adding
+    # a static-clutter occupancy mask were both measured on the validation clips
+    # (L3 matrix) and neither helped: the extra candidates were clubhead and
+    # netting chains, and on the negative clip they manufactured fits. The win
+    # came from the preprocessing above plus ballistic re-ranking below.
+    cands: dict[int, list[tuple[float, float, int]]] = {}
+    for i, th in masks.items():
         n, _, stats, cents = cv2.connectedComponentsWithStats(th)
         out = []
         for j in range(1, n):
@@ -200,7 +255,7 @@ def track_ball(video: str | Path, impact: int,
                 return track[:k + 2 - max(stall, rev)]
         return track
 
-    best, best_score = None, 1e18
+    scored: list[tuple[float, list]] = []
     for f0 in range(impact + 1, impact + 10):
         for (x0, y0, a0) in cands.get(f0, []):
             track = truncate_ballistic(chase(f0, x0, y0))
@@ -244,61 +299,84 @@ def track_ball(video: str | Path, impact: int,
             if pre_hits >= 2:
                 continue
             score = 10 * rms - 5 * min(len(track), 18) - 2 * sp[0] - 40 * dot
-            if score < best_score:
-                best, best_score = track, score
+            scored.append((score, track))
 
-    if best is None:
-        return {"track": [], "origin": origin, "fps": fps, "W": W, "H": H}
+    if not scored:
+        return {"track": [], "candidates": [], "origin": origin, "fps": fps,
+                "W": W, "H": H}
 
-    # predictive extension: chase past the end with a decaying threshold,
-    # searching the median-diff image around the predicted position. Guarded by
-    # ballistic consistency — the receding ball only ever slows and stays on
-    # course, so a speed-up or direction jump means we've latched onto clutter.
-    ext = list(best)
-    med32 = med.astype(np.float32)
-    while len(ext) >= 3 and len(ext) < len(best) + 25:
-        (fa, xa, ya), (fb, xb, yb) = ext[-3], ext[-1]
-        vel = ((xb - xa) / (fb - fa), (yb - ya) / (fb - fa))
-        fn = ext[-1][0] + 1
-        if fn not in aligned or fn > frames_sorted[-1]:
-            break
-        px, py = xb + vel[0], yb + vel[1]
-        if not (14 < px < W - 14 and 0.06 * H < py < 0.62 * H):
-            break
-        d = np.abs(aligned[fn].astype(np.float32) - med32)
-        r = 6
-        x0i, y0i = int(px) - r, int(py) - r
-        patch = d[max(0, y0i):y0i + 2 * r + 1, max(0, x0i):x0i + 2 * r + 1]
-        if patch.size == 0 or patch.max() < 8:      # threshold decay floor
-            break
-        yy, xx = np.unravel_index(int(np.argmax(patch)), patch.shape)
-        nx, ny = float(max(0, x0i) + xx), float(max(0, y0i) + yy)
-        step = math.hypot(nx - xb, ny - yb)
-        pv = math.hypot(*vel)
-        if step > max(3.0, 1.5 * pv):               # ball never speeds back up
-            break
-        if pv > 1.0 and step > 1.0:
-            cosang = ((nx - xb) * vel[0] + (ny - yb) * vel[1]) / (step * pv + 1e-9)
-            if cosang < math.cos(math.radians(35)):
-                break
-        ext.append((fn, nx, ny))
-
-    # subpixel refinement: intensity-weighted centroid on the median-diff patch
-    refined = []
-    for f, x, y in ext:
-        d = np.abs(aligned[f].astype(np.float32) - med32)
-        x0i, y0i = int(round(x)) - 7, int(round(y)) - 7
-        p = d[max(0, y0i):y0i + 15, max(0, x0i):x0i + 15].copy()
-        if p.size == 0 or p.max() < 1e-6:
-            refined.append((f, x, y))
+    # Shortlist distinct candidates (same start frame + start pixel = same
+    # chain). The 2D score cannot reliably separate the ball from the clubhead
+    # leaving the same origin at the same moment, so the caller re-ranks these
+    # by how well each actually fits a ball flight.
+    scored.sort(key=lambda s: s[0])
+    shortlist: list[list] = []
+    picked: list[set] = []
+    for _, track in scored:
+        c = _cells(track)
+        if any(_same_chain(c, p) for p in picked):
             continue
-        p[p < p.max() * 0.3] = 0
-        ys_, xs_ = np.mgrid[0:p.shape[0], 0:p.shape[1]]
-        s = p.sum()
-        refined.append((f, float((p * xs_).sum() / s + max(0, x0i)),
-                        float((p * ys_).sum() / s + max(0, y0i))))
+        picked.append(c)
+        shortlist.append(track)
+        if len(shortlist) >= MAX_CANDIDATES:
+            break
 
-    return {"track": refined, "origin": origin, "fps": fps, "W": W, "H": H}
+    med32 = med.astype(np.float32)
+
+    def extend(best):
+        """predictive extension: chase past the end with a decaying threshold,
+        searching the median-diff image around the predicted position. Guarded by
+        ballistic consistency — the receding ball only ever slows and stays on
+        course, so a speed-up or direction jump means we've latched onto clutter."""
+        ext = list(best)
+        while len(ext) >= 3 and len(ext) < len(best) + 25:
+            (fa, xa, ya), (fb, xb, yb) = ext[-3], ext[-1]
+            vel = ((xb - xa) / (fb - fa), (yb - ya) / (fb - fa))
+            fn = ext[-1][0] + 1
+            if fn not in aligned or fn > frames_sorted[-1]:
+                break
+            px, py = xb + vel[0], yb + vel[1]
+            if not (14 < px < W - 14 and 0.06 * H < py < 0.62 * H):
+                break
+            d = np.abs(aligned[fn].astype(np.float32) - med32)
+            r = 6
+            x0i, y0i = int(px) - r, int(py) - r
+            patch = d[max(0, y0i):y0i + 2 * r + 1, max(0, x0i):x0i + 2 * r + 1]
+            if patch.size == 0 or patch.max() < 8:      # threshold decay floor
+                break
+            yy, xx = np.unravel_index(int(np.argmax(patch)), patch.shape)
+            nx, ny = float(max(0, x0i) + xx), float(max(0, y0i) + yy)
+            step = math.hypot(nx - xb, ny - yb)
+            pv = math.hypot(*vel)
+            if step > max(3.0, 1.5 * pv):               # ball never speeds back up
+                break
+            if pv > 1.0 and step > 1.0:
+                cosang = ((nx - xb) * vel[0] + (ny - yb) * vel[1]) / (step * pv + 1e-9)
+                if cosang < math.cos(math.radians(35)):
+                    break
+            ext.append((fn, nx, ny))
+        return ext
+
+    def refine(ext):
+        """subpixel: intensity-weighted centroid on the median-diff patch"""
+        refined = []
+        for f, x, y in ext:
+            d = np.abs(aligned[f].astype(np.float32) - med32)
+            x0i, y0i = int(round(x)) - 7, int(round(y)) - 7
+            p = d[max(0, y0i):y0i + 15, max(0, x0i):x0i + 15].copy()
+            if p.size == 0 or p.max() < 1e-6:
+                refined.append((f, x, y))
+                continue
+            p[p < p.max() * 0.3] = 0
+            ys_, xs_ = np.mgrid[0:p.shape[0], 0:p.shape[1]]
+            s = p.sum()
+            refined.append((f, float((p * xs_).sum() / s + max(0, x0i)),
+                            float((p * ys_).sum() / s + max(0, y0i))))
+        return refined
+
+    candidates = [refine(extend(t)) for t in shortlist]
+    return {"track": candidates[0], "candidates": candidates, "origin": origin,
+            "fps": fps, "W": W, "H": H}
 
 
 # --------------------------------------------------------------------------
@@ -345,24 +423,42 @@ def _nelder_mead(loss, x0, steps, max_iter=300, ftol=0.02):
 class FlightFitter:
     def __init__(self, track, impact, fps, origin_px, pose, W, H,
                  f_px=DEFAULT_F_PX, golfer_m=1.75, horizon_y=None,
-                 backspin_rpm=3275.0):
+                 backspin_rpm=3275.0, speed_prior_mph=None,
+                 speed_prior_sigma=SPEED_PRIOR_SIGMA):
         self.cx, self.cy = W / 2, H / 2
         self.f_px = f_px
         self.spin = backspin_rpm
+        # Soft prior keeping ball speed near the club envelope. A ~0.6 s track
+        # constrains the trajectory's SHAPE (launch, azimuth) tightly but its
+        # SCALE barely at all — unpriored, the fit walks to the top of the speed
+        # grid and reports tour-pro carries for every swing (L2).
+        self.speed_prior = speed_prior_mph
+        self.speed_prior_sigma = speed_prior_sigma
         self.horizon_y = horizon_y if horizon_y is not None else self.cy
+        # Camera pitch from the horizon row. With the camera pitched UP by t, a
+        # world point at camera height and infinite range projects to
+        # cy + f*tan(t), so t = atan((horizon_y - cy)/f). (Getting this sign
+        # backwards biases the fitted launch angle by +2t — see L1 in
+        # deploy/BALL_TRACKING_PLAN.md.) Clamped: the horizon estimate is a
+        # coarse brightness-gradient guess and a wild value must not swing the fit.
+        self.pitch = max(-PITCH_CLAMP_RAD, min(PITCH_CLAMP_RAD,
+                                               math.atan((self.horizon_y - self.cy) / f_px)))
         h_px = standing_height_px(pose)
         self.Zg = f_px * golfer_m / h_px
         self.T = np.array([(origin_px[0] - self.cx) * self.Zg / f_px,
                            (origin_px[1] - self.cy) * self.Zg / f_px, self.Zg])
         self.times = np.array([(f - impact) / fps for f, _, _ in track])
         self.obs = np.array([(x, y) for _, x, y in track])
+        self.t_max = float(self.times.max()) if len(self.times) else 1.0
 
-    def _cam_pts(self, speed, launch, azim, f_px=None, n_traj=240):
+    def _cam_pts(self, speed, launch, azim, f_px=None, n_traj=240,
+                 max_time_s=15.0):
         """Simulated flight as camera-frame points (meters, absolute - tee at
         self.T). Returns (pts, tt, sim_result)."""
         f_px = f_px or self.f_px
-        pitch = math.atan((self.cy - self.horizon_y) / f_px)
-        r = simulate_flight(speed, launch, self.spin, 0.0, 0.0, trajectory_points=n_traj)
+        pitch = self.pitch
+        r = simulate_flight(speed, launch, self.spin, 0.0, 0.0,
+                            max_time_s=max_time_s, trajectory_points=n_traj)
         traj = np.array(r["trajectory"])
         tt = np.linspace(0, r["flight_time_s"], len(traj))
         P = traj * YD_M                              # [downrange, height, side] m
@@ -375,9 +471,15 @@ class FlightFitter:
         Yc2 = Zc * sp + Yc * cp
         return np.stack([Xc, Yc2, Zc2], axis=1) + self.T, tt, r
 
-    def _project(self, speed, launch, azim, dt=0.0, f_px=None):
+    def _project(self, speed, launch, azim, dt=0.0, f_px=None, fast=False):
+        """fast=True simulates only as far as the observed track reaches — the
+        loss never looks past it, and the full 6-9 s flight is ~10x the work."""
         f_px = f_px or self.f_px
-        pts, tt, r = self._cam_pts(speed, launch, azim, f_px=f_px)
+        if fast:
+            pts, tt, r = self._cam_pts(speed, launch, azim, f_px=f_px, n_traj=64,
+                                       max_time_s=self.t_max + 0.4)
+        else:
+            pts, tt, r = self._cam_pts(speed, launch, azim, f_px=f_px)
         out = []
         for t in self.times - dt:
             t = max(t, 0.0)
@@ -389,61 +491,120 @@ class FlightFitter:
                        if p[2] > 0.3 else (1e6, 1e6))
         return np.array(out), r
 
-    def _loss(self, v, obs=None, f_px=None):
+    def pixel_loss(self, v, obs=None, f_px=None):
+        """Trimmed mean reprojection error in pixels (no prior)."""
         dt = v[3] if len(v) > 3 else 0.0
         if not (40 <= v[0] <= 210 and 2 <= v[1] <= 45 and -60 <= v[2] <= 60
                 and -0.25 <= dt <= 0.25):
             return 1e9
-        pr, _ = self._project(v[0], v[1], v[2], dt, f_px=f_px)
+        pr, _ = self._project(v[0], v[1], v[2], dt, f_px=f_px, fast=True)
         o = self.obs if obs is None else obs
         errs = np.sort(np.linalg.norm(pr - o, axis=1))
         keep = max(6, int(len(errs) * 0.85))        # trimmed mean: tolerate tail junk
         return float(np.mean(errs[:keep]))
 
+    def _speed_penalty(self, speed):
+        """Prior cost in pixel-equivalent units (0 when no prior is set)."""
+        if not self.speed_prior:
+            return 0.0
+        z = math.log(max(speed, 1e-3) / self.speed_prior) / self.speed_prior_sigma
+        return SPEED_PRIOR_WEIGHT_PX * z * z
+
+    def _loss(self, v, obs=None, f_px=None):
+        pl = self.pixel_loss(v, obs=obs, f_px=f_px)
+        return pl if pl >= 1e9 else pl + self._speed_penalty(v[0])
+
+    def fit_at_speed(self, speed, obs=None, f_px=None, with_prior=True):
+        """Best (launch, azimuth, dt) with ball speed held fixed.
+
+        Multi-start: the (launch, azimuth) surface has local minima, and a
+        single start leaves spikes in the speed profile that corrupt both the
+        MAP estimate and the confidence band."""
+        loss = self._loss if with_prior else self.pixel_loss
+        grid = []
+        for la in (5, 9, 13, 17, 21, 26, 32):
+            for az in (-25, -12, 0, 12, 25):
+                grid.append((loss((speed, la, az), obs=obs, f_px=f_px), la, az))
+        grid.sort(key=lambda g: g[0])
+        best_v, best_l = None, 1e18
+        for _, la, az in grid[:3]:
+            v, l = _nelder_mead(
+                lambda p: loss((speed, p[0], p[1], p[2]), obs=obs, f_px=f_px),
+                [la, az, 0.0], [2, 3, 0.05])
+            if l < best_l:
+                best_v, best_l = v, l
+        return best_v, best_l
+
+    def profile_speed(self, speeds=SPEED_GRID, obs=None, f_px=None,
+                      with_prior=True):
+        """Profile likelihood along ball speed: [(speed, loss, [launch, az, dt])].
+
+        Speed is the badly-conditioned direction of this fit (a ~0.6 s track
+        pins the trajectory's shape far better than its scale), so it gets swept
+        explicitly rather than left to the optimizer — and the width of this
+        profile is the honest uncertainty (see calibrate_band)."""
+        out = []
+        for s in speeds:
+            v, l = self.fit_at_speed(s, obs=obs, f_px=f_px, with_prior=with_prior)
+            out.append((float(s), float(l), list(v)))
+        return out
+
     def fit_free(self):
-        best, bl = None, 1e18
-        for s in (90, 110, 130, 150, 170):
-            for la in (8, 14, 20, 26):
-                for az in (-15, 0, 10, 22):
-                    l = self._loss((s, la, az))
-                    if l < bl:
-                        best, bl = [s, la, az], l
-        best, bl = _nelder_mead(lambda v: self._loss(v), best + [0.0], [8, 2, 3, 0.05])
-        return best, bl
+        """Free 3-param fit via the speed profile + a joint polish.
+
+        A single joint Nelder-Mead from one coarse start lands in local minima
+        here (L2: it returned 119 mph on noise-free 150 mph synthetic data)."""
+        s_best, l_best, v_best = min(self.profile_speed(), key=lambda r: r[1])
+        for s in (s_best - 6, s_best - 3, s_best + 3, s_best + 6):
+            if not (SPEED_GRID[0] <= s <= SPEED_GRID[-1]):
+                continue
+            v, l = self.fit_at_speed(s)
+            if l < l_best:
+                s_best, l_best, v_best = s, l, v
+        v, l = _nelder_mead(lambda p: self._loss(p), [s_best] + list(v_best),
+                            [5, 1.5, 2, 0.04])
+        if l <= l_best:
+            return list(v), float(l)
+        return [float(s_best)] + list(v_best), float(l_best)
 
     def fit_constrained(self, speed):
-        best, bl = None, 1e18
-        for la in (8, 12, 16, 20, 25):
-            for az in (-20, -5, 5, 15, 25):
-                l = self._loss((speed, la, az))
-                if l < bl:
-                    best, bl = [la, az], l
-        v, bl = _nelder_mead(lambda v: self._loss((speed, v[0], v[1], v[2])),
-                             best + [0.0], [2, 3, 0.05])
-        return [speed] + v, bl
+        v, bl = self.fit_at_speed(speed)
+        return [speed] + list(v), bl
 
-    def bootstrap(self, base, n=10, seed=7):
-        rng = np.random.default_rng(seed)
+    def _with_anchor(self, k):
+        """Shallow clone with the depth anchor scaled by k (golfer-height and
+        focal-prior uncertainty both act on the anchor)."""
+        o = copy.copy(self)
+        o.Zg = self.Zg * k
+        o.T = self.T * k
+        return o
+
+    def confidence_band(self, delta_px=BAND_DELTA_PX, with_prior=True):
+        """Every solution within delta_px of the best, over the speed profile
+        AND the depth-anchor prior. This is the flat direction the old bootstrap
+        never sampled: it resampled track points and jittered focal length while
+        re-optimising from the same speed, so it reported +-5 yd on a carry that
+        the pixels only pin to about +-60."""
         rows = []
-        for _ in range(n):
-            idx = sorted(rng.choice(len(self.obs), size=len(self.obs), replace=True))
-            fj = self.f_px * (1 + rng.uniform(-F_PX_JITTER, F_PX_JITTER))
-            obs = self.obs[idx]
-            times = self.times[idx]
-            saved_t, saved_o = self.times, self.obs
-            self.times, self.obs = times, obs
-            v, _ = _nelder_mead(lambda v: self._loss(v, f_px=fj), base,
-                                [6, 1.5, 2, 0.04][:len(base)], max_iter=200)
-            _, r = self._project(v[0], v[1], v[2], v[3] if len(v) > 3 else 0.0,
-                                 f_px=fj)
-            self.times, self.obs = saved_t, saved_o
-            rows.append((v[0], v[1], v[2], r["carry_yd"], r["apex_yd"],
-                         r["flight_time_s"]))
-        B = np.array(rows)
-        pct = lambda c: [round(float(np.percentile(B[:, c], 10)), 1),
-                         round(float(np.percentile(B[:, c], 90)), 1)]
-        return {"speed_mph": pct(0), "launch_deg": pct(1), "azimuth_deg": pct(2),
-                "carry_yd": pct(3), "apex_yd": pct(4), "flight_time_s": pct(5)}
+        for k in (1 - ANCHOR_JITTER, 1.0, 1 + ANCHOR_JITTER):
+            fit = self if k == 1.0 else self._with_anchor(k)
+            for s, l, v in fit.profile_speed(with_prior=with_prior):
+                rows.append((l, s, v, fit))
+        lmin = min(r[0] for r in rows)
+        keep = [r for r in rows if r[0] <= lmin + delta_px]
+        cols: dict[str, list[float]] = {k: [] for k in
+                                        ("speed_mph", "launch_deg", "azimuth_deg",
+                                         "carry_yd", "apex_yd", "flight_time_s")}
+        for _, s, v, fit in keep:
+            _, r = fit._project(s, v[0], v[1], v[2])
+            cols["speed_mph"].append(s)
+            cols["launch_deg"].append(v[0])
+            cols["azimuth_deg"].append(v[1])
+            cols["carry_yd"].append(r["carry_yd"])
+            cols["apex_yd"].append(r["apex_yd"])
+            cols["flight_time_s"].append(r["flight_time_s"])
+        return {k: [round(min(vals), 1), round(max(vals), 1)]
+                for k, vals in cols.items()}, len(keep)
 
 
 # --------------------------------------------------------------------------
@@ -452,8 +613,11 @@ class FlightFitter:
 
 def estimate_horizon_y(video: str | Path, frame: int) -> float | None:
     """Sky/ground boundary via per-row brightness gradient in the top 2/3 of a
-    frame — coarse but only feeds a small pitch correction."""
-    cap = cv2.VideoCapture(str(video))
+    frame — coarse but only feeds a small pitch correction.
+
+    open_capture matters here specifically: on a sideways phone frame the
+    horizon runs vertically and a row scan finds nothing meaningful."""
+    cap = open_capture(video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
     ok, f = cap.read()
     cap.release()
@@ -475,7 +639,7 @@ def estimate_horizon_y(video: str | Path, frame: int) -> float | None:
 def analyze(video: str | Path, landmarks_csv: str | Path,
             scorecard_json: str | Path | None = None,
             club: str | None = None, speed_scale: float = 1.0,
-            golfer_m: float = 1.75) -> dict:
+            golfer_m: float = 1.75, debug: bool = False) -> dict:
     pose = load_pose_2d(landmarks_csv)
     impact = None
     if scorecard_json and Path(scorecard_json).exists():
@@ -487,19 +651,98 @@ def analyze(video: str | Path, landmarks_csv: str | Path,
     if impact is None:
         return {"quality": "simulated", "reason": "no impact frame"}
 
-    t = track_ball(video, int(impact), pose)
-    track = t["track"]
-    n = len(track)
+    # Two preprocessing passes. CLAHE rescues a ball lost in bright sky/pole
+    # clutter (IMG_8107: 8 -> 14 points) but floods a dark night bay with
+    # competing blobs and loses a ball that was already high-contrast
+    # (IMG_3434). Neither setting wins everywhere, so run both and let the
+    # ballistic ranking below choose — it is a far better judge than any global
+    # preprocessing flag.
+    t = track_ball(video, int(impact), pose, clahe=False)
+    t_eq = track_ball(video, int(impact), pose, clahe=True)
+    pool: list[list] = []
+    picked: list[set] = []
+    for cand in (t.get("candidates") or []) + (t_eq.get("candidates") or []):
+        c = _cells(cand)
+        if any(_same_chain(c, p) for p in picked):
+            continue
+        picked.append(c)
+        pool.append(cand)
+
     club_key = normalize_club(club) or "driver"
     env_speed = CLUB_DEFAULTS[club_key]["amateur"][0] * max(0.88, min(1.12, speed_scale))
     spin = CLUB_DEFAULTS[club_key]["amateur"][2]
+    horizon = estimate_horizon_y(video, int(impact))
+
+    def make_fitter(tr):
+        return FlightFitter(tr, int(impact), t["fps"], t["origin"], pose,
+                            t["W"], t["H"], horizon_y=horizon, golfer_m=golfer_m,
+                            backspin_rpm=spin, speed_prior_mph=env_speed)
+
+    def trim_tail(cand):
+        """Keep the longest PREFIX of the chain that is still one ball flight.
+
+        The head of a chain is the trustworthy part — it has to clear the launch
+        cone, speed and anti-causality filters at initiation. The tail is
+        speculative: the predictive extension keeps chasing after the ball has
+        faded and picks up clutter, which then drags the whole fit (IMG_3434's
+        real f290-305 ball ran on to f330 and its residual went 2.5 -> 12 px,
+        past the rejection gate). So: fit the head, then walk forward for as long
+        as the observations keep agreeing with that flight."""
+        if len(cand) <= PREFIX_HEAD_PTS:
+            return cand
+        cur = list(cand)
+        for _ in range(2):
+            head = cur[:PREFIX_HEAD_PTS]
+            fh = make_fitter(head)
+            vh, _ = fh.fit_constrained(env_speed)
+            if fh.pixel_loss(vh) > MAX_FIT_RESIDUAL_PX:
+                return cur                   # head is not a flight; let it be rejected
+            fa = make_fitter(cur)
+            pr, _ = fa._project(vh[0], vh[1], vh[2], vh[3])
+            errs = np.linalg.norm(pr - fa.obs, axis=1)
+            k = PREFIX_HEAD_PTS
+            while k < len(cur) and errs[k] <= PREFIX_GROW_TOL_PX:
+                k += 1
+            if k == len(cur):
+                break
+            cur = cur[:k]
+        return cur
+
+    # Re-rank the 2D shortlist by ballistic fit: the clubhead leaves the same
+    # origin at the same instant as the ball and looks just as track-like in 2D,
+    # but it cannot be reprojected as a flight (L3/L4).
+    ranked = []
+    for cand in pool:
+        if len(cand) < PARTIAL_MIN_PTS:
+            continue
+        cand = trim_tail(cand)
+        cf = make_fitter(cand)
+        cv_, _ = cf.fit_constrained(env_speed)
+        ranked.append((cf.pixel_loss(cv_), cand))
+    if debug:
+        for resid, cand in sorted(ranked, key=lambda rr: rr[0]):
+            print(f"  [rank] n={len(cand):2d} f{cand[0][0]}..{cand[-1][0]} "
+                  f"resid={resid:7.2f}")
+    # Among flights that actually fit, prefer the one the most frames support.
+    # Ranking on mean residual alone rewards whittling a chain down to a handful
+    # of points, which is how a 10-point clutter fragment beat the real 16-point
+    # ball track on IMG_3434.
+    good = [r for r in ranked if r[0] <= MAX_FIT_RESIDUAL_PX]
+    if good:
+        track = max(good, key=lambda r: (len(r[1]), -r[0]))[1]
+    elif ranked:
+        track = min(ranked, key=lambda r: r[0])[1]
+    else:
+        track = t["track"] or t_eq["track"]
+    n = len(track)
 
     result: dict = {
-        "engine": "balltrack-v1",
+        "engine": "balltrack-v2",
         "impact_frame": int(impact),
         "fps": t["fps"],
         "track_2d": [[f, round(x, 2), round(y, 2)] for f, x, y in track],
         "n_track_points": n,
+        "n_candidates": len(pool),
         "azimuth_note": "azimuth is relative to the camera axis (single camera, no aim line)",
     }
     if n < PARTIAL_MIN_PTS:
@@ -507,37 +750,64 @@ def analyze(video: str | Path, landmarks_csv: str | Path,
         result["reason"] = f"track too short ({n} pts)"
         return result
 
-    horizon = estimate_horizon_y(video, int(impact))
-    fitter = FlightFitter(track, int(impact), t["fps"], t["origin"], pose,
-                          t["W"], t["H"], horizon_y=horizon, golfer_m=golfer_m,
-                          backspin_rpm=spin)
+    fitter = make_fitter(track)
+    v, _ = fitter.fit_free() if n >= MEASURED_MIN_PTS else fitter.fit_constrained(env_speed)
+    resid = fitter.pixel_loss(v)                 # report PIXEL error, not loss+prior
+    _, r = fitter._project(v[0], v[1], v[2], v[3])
 
-    if n >= MEASURED_MIN_PTS:
-        v, resid = fitter.fit_free()
-        _, r = fitter._project(v[0], v[1], v[2], v[3])
-        ci = fitter.bootstrap(v)
-        result.update({
-            "quality": "measured",
-            "fit": {"ball_speed_mph": round(v[0], 1), "launch_deg": round(v[1], 1),
-                    "azimuth_deg": round(v[2], 1), "launch_dt_s": round(v[3], 3),
-                    "residual_px": round(resid, 1)},
-            "flight": {"carry_yd": round(r["carry_yd"]), "apex_yd": round(r["apex_yd"]),
-                       "side_yd": round(r["side_yd"]),
-                       "flight_time_s": round(r["flight_time_s"], 1)},
-            "ci_10_90": ci,
-        })
+    # A real ball flight reprojects to a couple of pixels. Anything worse is
+    # clutter that survived the 2D filters (a rising club, a net edge, another
+    # bay's ball) — report no measurement rather than a confident wrong one.
+    reject = None
+    if resid > MAX_FIT_RESIDUAL_PX:
+        reject = f"{resid:.1f} px reprojection residual over {n} points"
+    elif abs(v[3]) > MAX_LAUNCH_DT_S:
+        # launch_dt_s slides the flight's start in time. A real ball leaves at
+        # impact, so a fit that needs to start it several frames early (or late)
+        # is bending the model around clutter, not tracking a golf ball.
+        reject = f"fitted launch is {abs(v[3]):.2f}s from impact"
+    if reject:
+        result["quality"] = "simulated"
+        result["reason"] = f"track does not fit a ball flight ({reject})"
+        result["rejected_fit"] = {"launch_deg": round(v[1], 1),
+                                  "azimuth_deg": round(v[2], 1),
+                                  "launch_dt_s": round(v[3], 3),
+                                  "residual_px": round(resid, 1)}
+        return result
+
+    # Reported band = posterior (pixels + priors). The measured/partial decision
+    # uses the PIXEL-ONLY band, so a tight prior can never talk us into calling
+    # a speed "measured" that the video never actually pinned down.
+    band, n_band = fitter.confidence_band()
+    raw_band, _ = fitter.confidence_band(with_prior=False)
+    rlo, rhi = raw_band["carry_yd"]
+    speed_measured = (n >= MEASURED_MIN_PTS
+                      and (rhi - rlo) / max((rlo + rhi) / 2.0, 1.0) <= BAND_MEASURED_FRAC)
+
+    fit = {"launch_deg": round(v[1], 1), "azimuth_deg": round(v[2], 1),
+           "launch_dt_s": round(v[3], 3), "residual_px": round(resid, 1)}
+    if speed_measured:
+        fit["ball_speed_mph"] = round(v[0], 1)
     else:
-        v, resid = fitter.fit_constrained(env_speed)
+        # The pixels do not pin the scale: keep the measured SHAPE and take the
+        # scale from the club envelope, re-fitting launch/azimuth at that speed.
+        v, _ = fitter.fit_constrained(env_speed)
+        resid = fitter.pixel_loss(v)
         _, r = fitter._project(v[0], v[1], v[2], v[3])
-        result.update({
-            "quality": "partial",
-            "fit": {"ball_speed_mph": round(env_speed, 1), "speed_source": "club_envelope",
+        fit.update({"ball_speed_mph": round(env_speed, 1),
+                    "speed_source": "club_envelope",
                     "launch_deg": round(v[1], 1), "azimuth_deg": round(v[2], 1),
-                    "launch_dt_s": round(v[3], 3), "residual_px": round(resid, 1)},
-            "flight": {"carry_yd": round(r["carry_yd"]), "apex_yd": round(r["apex_yd"]),
-                       "side_yd": round(r["side_yd"]),
-                       "flight_time_s": round(r["flight_time_s"], 1)},
-        })
+                    "launch_dt_s": round(v[3], 3), "residual_px": round(resid, 1)})
+    result.update({
+        "quality": "measured" if speed_measured else "partial",
+        "fit": fit,
+        "flight": {"carry_yd": round(r["carry_yd"]), "apex_yd": round(r["apex_yd"]),
+                   "side_yd": round(r["side_yd"]),
+                   "flight_time_s": round(r["flight_time_s"], 1)},
+        "ci_10_90": band,
+        "band_note": (f"range over every flight within {BAND_DELTA_PX:.0f} px of the best "
+                      f"fit ({n_band} solutions), including depth-anchor uncertainty"),
+    })
     # UI arc + replay-frame trajectory come from the fitted sim
     rr = simulate_flight(result["fit"]["ball_speed_mph"], result["fit"]["launch_deg"],
                          spin, 0.0, 0.0, trajectory_points=48)

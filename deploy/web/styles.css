@@ -182,6 +182,11 @@ li.done .check::after {
 .media-card { padding: 16px; }
 .media-card h3 { margin: 0 0 10px; font-size: 15px; }
 .media-card video, #replay-canvas { width: 100%; border-radius: 10px; display: block; background: #10231a; }
+/* Phone uploads are 9:16 once the camera rotation is baked in (see
+   Scripts/video_orientation.py). Unconstrained, width:100% renders those ~1000px
+   tall and pushes the 3D replay off the fold. Cap the height and letterbox
+   instead; the baked demo clips are square/landscape so they never hit this. */
+.media-card video { max-height: 70vh; object-fit: contain; }
 .replay-controls { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .replay-controls input[type=range] { flex: 1; accent-color: var(--green); }
 

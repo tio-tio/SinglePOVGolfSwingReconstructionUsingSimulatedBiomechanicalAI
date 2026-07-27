@@ -43,6 +43,16 @@ LIFTER = os.environ.get("LIFTER", "golfpose3d")
 _s3 = boto3.client("s3")
 _rd = boto3.client("rds-data") if DB_CLUSTER_ARN else None
 
+# The pipeline steps run as subprocesses, but the ingest bake happens inline.
+# Guarded: this handler must never fail to LOAD over the orientation fix — the
+# Scripts-side open_capture() still corrects orientation if this is missing.
+sys.path.insert(0, str(SCRIPTS))
+try:
+    from video_orientation import normalize_video
+except Exception as _e:  # pragma: no cover — image build regression only
+    print(f"[proc] video_orientation unavailable ({_e}); relying on ORIENTATION_AUTO", flush=True)
+    normalize_video = None
+
 # artifacts the front end consumes, keyed by the suffix each pipeline step emits.
 # pose_debug.mp4 / pose_diag.json are diagnostics (L/R-colored MediaPipe skeleton
 # + swap/jitter metrics) — not consumed by the app UI but kept with every job so
@@ -109,6 +119,32 @@ def _probe_fps(video: Path) -> float | None:
     except Exception as e:
         print(f"[proc] fps probe failed ({e}) — skipping hand-speed indicator", flush=True)
         return None
+
+
+def _normalize_orientation(video: Path, job_id: str) -> None:
+    """Bake any camera rotation into the pixels, in place, before step one.
+
+    Phones store portrait clips as landscape frames plus a display-matrix
+    rotation. Doing this once here is what makes the rest of the pipeline
+    orientation-free: pose, overlay, diagnostics and ball tracking all just
+    read an upright file, and so does anything added later.
+
+    Rotation-free uploads cost a metadata probe and no transcode. Never fatal
+    — Scripts' open_capture() is the second line of defence, so a failure here
+    degrades to the old behaviour instead of losing the job.
+    """
+    if normalize_video is None:
+        return
+    try:
+        upright, rotation = normalize_video(video, video.with_name(f"{video.stem}_upright.mp4"))
+        if upright != video:
+            # move it back over the original name so the pipeline's stem — and
+            # therefore every artifact filename — is unchanged by the fix
+            os.replace(str(upright), str(video))
+            print(f"[proc] job {job_id}: baked {rotation}° camera rotation into pixels", flush=True)
+    except Exception as e:
+        print(f"[proc] job {job_id}: orientation normalise skipped "
+              f"({type(e).__name__}: {e}) — falling back to ORIENTATION_AUTO", flush=True)
 
 
 def _pipeline(video: Path, work: Path) -> dict:
@@ -268,6 +304,7 @@ def handler(event, _ctx=None):
         except Exception as e:  # deleted/expired upload (30d TTL) — drop, don't poison retries
             print(f"[proc] job {job_id}: source object gone ({type(e).__name__}) — skipping", flush=True)
             continue
+        _normalize_orientation(video, job_id)
         out = _pipeline(video, work)
         uploaded = _upload_artifacts(work, out["stem"], job_id)
         missing = REQUIRED_ARTIFACTS - {Path(k).name for k in uploaded}
