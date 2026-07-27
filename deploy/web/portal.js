@@ -135,12 +135,51 @@ async function verifyDevAccess() {
     const r = await fetch(`${window.RESULTS_BASE}/__access_check__`, { cache: "no-store" });
     if (r.status !== 204) throw new Error("denied " + r.status);
     if (pendingDeepLink) { const j = pendingDeepLink; pendingDeepLink = null; openJob(j); }
+    syncTeamLibrary();          // pull every teammate's uploads into "Your swings"
   } catch (e) {
     Auth.clearDevCookie();
     renderLibrary();
     statusBox().innerHTML =
       `<p class="err">That access code wasn't accepted — results stay locked.
        Check the code and sign in again.</p>`;
+  }
+}
+
+/* ---- shared team library: the dev account sees EVERY processed upload ----
+ * The browser's localStorage library only knows this browser's uploads, so a
+ * teammate's swings were invisible. GET /jobs (access-code-gated Lambda) lists
+ * every job straight from S3; merge them in, keeping any richer local entry
+ * (a locally-uploaded swing already has its filename even after the uploads
+ * bucket's 30-day TTL erases it server-side). */
+async function syncTeamLibrary() {
+  if (!window.API_BASE || !devOnly()) return;
+  try {
+    const code = (document.cookie.match(/(?:^|;\s*)mc_dev=([^;]+)/) || [])[1] || "";
+    const r = await fetch(`${window.API_BASE}/jobs`,
+                          { headers: { "x-mc-access": decodeURIComponent(code) } });
+    if (!r.ok) throw new Error("jobs http " + r.status);
+    const { jobs } = await r.json();
+    const local = libLoad();
+    const byId = Object.fromEntries(local.map(i => [i.jobId, i]));
+    let changed = false;
+    for (const j of jobs) {
+      if (!j.ready) continue;
+      const mine = byId[j.jobId];
+      if (mine) {   // upgrade placeholder names/stale status, keep local names
+        if ((mine.name === "shared swing" || !mine.name) && j.name) { mine.name = j.name; changed = true; }
+        if (mine.status !== "ready") { mine.status = "ready"; changed = true; }
+      } else {
+        local.push({ jobId: j.jobId, name: j.name, date: j.date, status: "ready" });
+        changed = true;
+      }
+    }
+    if (changed) {
+      local.sort((a, b) => new Date(b.date) - new Date(a.date));
+      libSave(local.slice(0, 200));
+      renderLibrary();
+    }
+  } catch (e) {
+    console.warn("team library sync failed:", e);   // local library still works
   }
 }
 
@@ -380,8 +419,24 @@ async function openJob(jobId) {
     goto("results");
     activateChat(jobId);          // async: chat panel fills in as metrics land
   } catch (e) {
-    if (seq === navSeq) {
-      goto("pick");
+    if (seq !== navSeq) return;
+    goto("pick");
+    // Don't guess — check WHY it failed. An expired/wrong access cookie makes
+    // every artifact fetch fail exactly like a missing job would.
+    let locked = false;
+    try {
+      const probe = await fetch(`${window.RESULTS_BASE}/__access_check__`, { cache: "no-store" });
+      locked = probe.status !== 204;
+    } catch (e2) { /* network trouble — fall through to the generic message */ }
+    if (locked) {
+      Auth.clearDevCookie();
+      renderLibrary();
+      statusBox().innerHTML =
+        `<p class="err"><strong>Your dev access has expired or the code changed.</strong>
+         Sign in again with the access code to view swings.</p>`;
+      Auth.openSignIn();
+    } else {
+      console.warn("openJob failed for", jobId, e);
       statusBox().innerHTML =
         `<p class="err">That swing's results aren't ready yet — check back in a minute.</p>`;
     }

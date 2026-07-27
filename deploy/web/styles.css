@@ -433,3 +433,11 @@ body.modal-open { overflow: hidden; }
 .section-head p.muted, .results-footer p.muted, p.upload-hint {
   display: inline-block; background: rgba(250, 249, 245, .88);
   border-radius: 8px; padding: 2px 8px; }
+
+/* ---- chat markdown (vendored marked; bot messages only) ---- */
+.msg.bot p { margin: 0 0 8px; }
+.msg.bot p:last-child { margin-bottom: 0; }
+.msg.bot ul, .msg.bot ol { margin: 4px 0 8px; padding-left: 20px; }
+.msg.bot li { margin: 2px 0; }
+.msg.bot code { background: rgba(0,0,0,.07); padding: 0 4px; border-radius: 4px; font-size: .9em; }
+.msg.bot h1, .msg.bot h2, .msg.bot h3, .msg.bot h4 { font-size: 1em; margin: 8px 0 4px; }

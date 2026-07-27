@@ -482,7 +482,19 @@ const Chat = (() => {
       d.append(sum, bodyd); dom.stream.append(d);
     }
     const w = el("div", "chat-turn"); w.append(el("div", "who", "MotionCaddie"));
-    const m = el("div", "msg bot" + (res.refuse ? " refuse" : ""), res.answer);
+    // Markdown rendering (vendored marked.min.js). The answer is HTML-escaped
+    // FIRST so model/tool output can never inject markup — marked then only
+    // ever sees plain text with markdown syntax. Falls back to plain text.
+    const m = el("div", "msg bot" + (res.refuse ? " refuse" : ""));
+    let mdHtml = null;
+    if (window.marked) {
+      try {
+        const escd = String(res.answer ?? "").replace(/[&<>"']/g,
+          c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+        mdHtml = marked.parse(escd, { breaks: true, async: false });
+      } catch (e) { mdHtml = null; }
+    }
+    if (mdHtml != null) m.innerHTML = mdHtml; else m.textContent = res.answer;
     const flight = tcs.map(e => e.result).find(r => r && Array.isArray(r._ui_trajectory) && r._ui_trajectory.length > 2);
     if (flight) m.append(flightArc(flight));
     const g = grade(res); const gd = el("span", "grade" + (g.grounded ? "" : " warn"));
