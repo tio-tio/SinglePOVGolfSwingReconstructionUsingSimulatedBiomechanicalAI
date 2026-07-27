@@ -8,6 +8,12 @@
  */
 "use strict";
 
+/* Per-page-load salt for media URLs. Chrome takes a disk-cache lock per media
+ * URL; a stalled load in ANY tab (e.g. yesterday's zombie tab) then blocks the
+ * same video everywhere — the "video never loads" bug. Unique URLs per load
+ * sidestep the lock; the 03_outputs behavior is CachingDisabled anyway. */
+const MEDIA_BUST = "s=" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
 /* ---- data access: a processed job's bundle (same shape as demo assets) ---- */
 async function loadJobBundle(jobId) {
   const base = `${window.RESULTS_BASE}/${jobId}`;
@@ -21,7 +27,8 @@ async function loadJobBundle(jobId) {
     // measured ball track + flight fit (image v12+) — absent on older jobs
     fetch(`${base}/ball_3d.json`).then(r => r.ok ? r.json() : null).catch(() => null),
   ]);
-  return { metrics, explanation, replay, scorecard, ball, overlayUrl: `${base}/overlay.mp4` };
+  return { metrics, explanation, replay, scorecard, ball,
+           overlayUrl: `${base}/overlay.mp4?${MEDIA_BUST}` };
 }
 
 /* ================= swing library (persistent, this browser) ===============
@@ -30,7 +37,9 @@ async function loadJobBundle(jobId) {
 const LIB_KEY = "mc_library_v1";
 
 function libLoad() {
-  try { return JSON.parse(localStorage.getItem(LIB_KEY)) || []; }
+  // scrub corrupt entries (a sync bug once wrote jobId: undefined) so
+  // poisoned libraries heal themselves on every load
+  try { return (JSON.parse(localStorage.getItem(LIB_KEY)) || []).filter(i => i && i.jobId && i.jobId !== "undefined"); }
   catch (e) { return []; }
 }
 function libSave(items) { localStorage.setItem(LIB_KEY, JSON.stringify(items)); }
@@ -164,12 +173,12 @@ async function syncTeamLibrary() {
     let changed = false;
     for (const j of jobs) {
       if (!j.ready) continue;
-      const mine = byId[j.jobId];
+      const mine = byId[j.job_id];   // the /jobs Lambda speaks snake_case
       if (mine) {   // upgrade placeholder names/stale status, keep local names
         if ((mine.name === "shared swing" || !mine.name) && j.name) { mine.name = j.name; changed = true; }
         if (mine.status !== "ready") { mine.status = "ready"; changed = true; }
       } else {
-        local.push({ jobId: j.jobId, name: j.name, date: j.date, status: "ready" });
+        local.push({ jobId: j.job_id, name: j.name, date: j.date, status: "ready" });
         changed = true;
       }
     }
@@ -346,14 +355,37 @@ function renderLibrary() {
       <span class="dash-swing-name" title="${esc(it.name)}">${esc(it.name)}</span>
       <span class="muted small">${esc(date)}</span>${badge}
       ${ready ? `<button type="button" class="btn-ghost small lib-open">Open result</button>` : ""}
+      <button type="button" class="btn-ghost small lib-rename" title="Rename this swing"
+              aria-label="Rename ${esc(it.name)}">✎</button>
       <button type="button" class="btn-ghost small lib-remove" title="Remove from this list"
               aria-label="Remove ${esc(it.name)} from this list">✕</button>
     </div>`;
   }).join("");
   wrap.querySelectorAll(".lib-open").forEach(b =>
     b.addEventListener("click", () => openJob(b.closest(".dash-swing").dataset.job)));
+  wrap.querySelectorAll(".lib-rename").forEach(b =>
+    b.addEventListener("click", () => libRename(b.closest(".dash-swing").dataset.job)));
   wrap.querySelectorAll(".lib-remove").forEach(b =>
     b.addEventListener("click", () => libRemove(b.closest(".dash-swing").dataset.job)));
+}
+
+/* rename a swing (persists in localStorage across sessions; the team-library
+ * sync never overwrites a custom name — it only fills placeholders) */
+function libRename(jobId) {
+  const items = libLoad();
+  const it = items.find(i => i.jobId === jobId);
+  if (!it) return;
+  const next = prompt("Rename this swing:", it.name || "");
+  if (next == null) return;                 // cancelled
+  const name = next.trim().slice(0, 80);
+  if (!name || name === it.name) return;
+  it.name = name;
+  libSave(items);
+  renderLibrary();
+  if (state.selectedId === jobId) {
+    $("#results-clip-label").textContent =
+      `Your swing · ${name} · analyzed by the real pipeline`;
+  }
 }
 
 /* ========================== results screen ============================= */
@@ -378,7 +410,8 @@ async function jobMetricsFor(jobId) {
 /* register the active job (and its ready siblings) with the grounded chat */
 async function activateChat(jobId) {
   const entries = [{ jobId, name: libName(jobId) || "this swing" },
-                   ...otherReadyJobs().map(i => ({ jobId: i.jobId, name: i.name }))];
+                   // cap chat compare prefetch — one metrics.json per sibling
+                   ...otherReadyJobs().slice(0, 12).map(i => ({ jobId: i.jobId, name: i.name }))];
   const clips = [], byId = {};
   for (const e of entries) {
     try {
@@ -543,14 +576,17 @@ function wireReplaySync(vid, replay) {
 /* ---- rail: hop between your ready swings without leaving results ---- */
 function renderRecentRail() {
   const rail = $("#recent-rail"), cards = $("#rail-cards");
-  const others = otherReadyJobs();
+  // cap the rail: every card is a <video> fetching metadata, and with the
+  // shared team library (~45 swings) an uncapped rail saturates the browser's
+  // per-host connections and starves the MAIN overlay video (it never loads)
+  const others = otherReadyJobs().slice(0, 8);
   if (!others.length) { rail.hidden = true; return; }
   rail.hidden = false;
   cards.innerHTML = "";
   for (const it of others) {
     const b = document.createElement("button");
     b.type = "button"; b.className = "rail-card";
-    b.innerHTML = `<video src="${esc(window.RESULTS_BASE)}/${esc(it.jobId)}/overlay.mp4"
+    b.innerHTML = `<video src="${esc(window.RESULTS_BASE)}/${esc(it.jobId)}/overlay.mp4?${MEDIA_BUST}"
                      preload="metadata" muted playsinline></video>
                    <span>${esc(it.name)}</span>`;
     b.addEventListener("click", () => openJob(it.jobId));
