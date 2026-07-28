@@ -251,6 +251,15 @@ const Auth = (() => {
   }
 
   return { init, isSignedIn, currentUser, signOut, isDev, clearDevCookie,
-           DEV_USER, openCreate: () => openModal("modal-create"), openSignIn: () => openModal("modal-signin") };
+           DEV_USER, openCreate: () => openModal("modal-create"),
+           /* prefill=true drops the dev username in so the pilot gate only
+            * ever asks the human for the access code */
+           openSignIn: (prefill) => {
+             openModal("modal-signin");
+             if (prefill) {
+               const u = q("si-username"); if (u) u.value = DEV_USER;
+               const p = q("si-password"); if (p) p.focus();
+             }
+           } };
 })();
 if (typeof window !== "undefined") window.Auth = Auth;

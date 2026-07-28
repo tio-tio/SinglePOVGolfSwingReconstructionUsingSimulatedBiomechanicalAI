@@ -127,13 +127,21 @@ const devOnly = () => !!(window.Auth && Auth.isDev && Auth.isDev());
 let pendingDeepLink = null;   // a #job= link seen while locked; retried on sign-in
 
 function showPilotNotice() {
-  statusBox().innerHTML =
-    `<p><strong>Private pilot.</strong> The swings analyzed here are of real people, so
-     uploads and results are limited to the dev account for now.
-     <button type="button" class="btn-text" id="pilot-signin">Sign in</button> with the
-     dev access code to continue.</p>`;
+  // Be explicit about WHICH account and WHY — a bare "sign in" prompt on the
+  // upload button reads as "the upload button is broken".
+  const u = window.Auth && Auth.isSignedIn() ? Auth.currentUser() : null;
+  const who = u && u.username !== Auth.DEV_USER
+    ? `<p>You're signed in as <strong>${esc(u.displayName || u.username)}</strong>, but uploads
+       and results run through the shared team account during the pilot.</p>`
+    : "";
+  statusBox().innerHTML = who +
+    `<p><strong>Uploading needs the team account.</strong> The swings here are of real
+     people, so uploads and results sit behind one shared login:
+     <code>${esc((window.Auth && Auth.DEV_USER) || "dev@motioncaddie.dev")}</code>, with the
+     team access code as the password (ask Banjot if you don't have it).</p>
+     <p><button type="button" class="btn-primary small" id="pilot-signin">Sign in to upload</button></p>`;
   const b = $("#pilot-signin");
-  if (b) b.addEventListener("click", () => Auth.openSignIn());
+  if (b) b.addEventListener("click", () => Auth.openSignIn(true));
 }
 
 /* the access code is validated by the edge, not by JS — probe it once so a
@@ -429,7 +437,7 @@ async function openJob(jobId) {
     pendingDeepLink = jobId;      // reopened automatically after dev sign-in
     goto("pick");
     showPilotNotice();
-    Auth.openSignIn();
+    Auth.openSignIn(true);
     return;
   }
   const seq = ++navSeq;
@@ -467,7 +475,7 @@ async function openJob(jobId) {
       statusBox().innerHTML =
         `<p class="err"><strong>Your dev access has expired or the code changed.</strong>
          Sign in again with the access code to view swings.</p>`;
-      Auth.openSignIn();
+      Auth.openSignIn(true);
     } else {
       console.warn("openJob failed for", jobId, e);
       statusBox().innerHTML =
@@ -897,6 +905,14 @@ function renderHeroGreeting() {
       "the cloud and returns a stabilized pose overlay, a 3D replay you can spin, " +
       "tour-reference metrics, and a coach you can ask about any of it.";
   }
+  // say the quiet part BEFORE the click: the buttons are gated during the pilot
+  const hint = $("#upload-hint");
+  if (hint) {
+    hint.innerHTML = devOnly()
+      ? "MP4 or MOV, up to 200&nbsp;MB. Analysis runs on the real cloud pipeline and usually takes 2–3 minutes."
+      : "🔒 Private pilot — uploading needs the shared team account " +
+        `(<code>${esc((window.Auth && Auth.DEV_USER) || "dev@motioncaddie.dev")}</code> + team access code).`;
+  }
 }
 
 function init() {
@@ -908,11 +924,11 @@ function init() {
   });
 
   $("#btn-upload").addEventListener("click", () => {
-    if (!devOnly()) { showPilotNotice(); Auth.openSignIn(); return; }
+    if (!devOnly()) { showPilotNotice(); Auth.openSignIn(true); return; }
     $("#file-input").click();
   });
   $("#btn-record").addEventListener("click", () => {
-    if (!devOnly()) { showPilotNotice(); Auth.openSignIn(); return; }
+    if (!devOnly()) { showPilotNotice(); Auth.openSignIn(true); return; }
     $("#camera-input").click();
   });
   $("#file-input").addEventListener("change", (e) => onFileChosen(e.target.files[0]));
