@@ -54,7 +54,24 @@ function libSetStatus(jobId, status) {
   const it = items.find(i => i.jobId === jobId);
   if (it) { it.status = status; libSave(items); renderLibrary(); }
 }
+/* removed-swing tombstones: ✕ hides a swing from THIS browser's list, and the
+ * team-library sync must not resurrect it — without these, a removed job is
+ * indistinguishable from a teammate's upload we've never seen, so every sync
+ * pushed it straight back (the "delete doesn't work" bug). Shared with the
+ * demo page (app.js) via the same storage key. */
+const HIDDEN_KEY = "mc_library_hidden_v1";
+function hiddenLoad() {
+  try { return JSON.parse(localStorage.getItem(HIDDEN_KEY)) || []; }
+  catch (e) { return []; }
+}
+function hiddenAdd(jobId) {
+  const ids = hiddenLoad().filter(id => id !== jobId);
+  ids.unshift(jobId);
+  localStorage.setItem(HIDDEN_KEY, JSON.stringify(ids.slice(0, 500)));
+}
+
 function libRemove(jobId) {
+  hiddenAdd(jobId);              // survive the next team-library sync
   libSave(libLoad().filter(i => i.jobId !== jobId));
   renderLibrary();
 }
@@ -178,9 +195,11 @@ async function syncTeamLibrary() {
     const { jobs } = await r.json();
     const local = libLoad();
     const byId = Object.fromEntries(local.map(i => [i.jobId, i]));
+    const hidden = new Set(hiddenLoad());
     let changed = false;
     for (const j of jobs) {
       if (!j.ready) continue;
+      if (hidden.has(j.job_id)) continue;   // user removed it from this browser
       const mine = byId[j.job_id];   // the /jobs Lambda speaks snake_case
       if (mine) {   // upgrade placeholder names/stale status, keep local names
         if ((mine.name === "shared swing" || !mine.name) && j.name) { mine.name = j.name; changed = true; }

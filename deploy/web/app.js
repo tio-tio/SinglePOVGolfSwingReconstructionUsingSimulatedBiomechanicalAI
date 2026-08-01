@@ -47,7 +47,19 @@ function libSetStatus(jobId, status) {
   const it = items.find(i => i.jobId === jobId);
   if (it) { it.status = status; libSave(items); renderLibrary(); }
 }
+/* removed-swing tombstones — same key as portal.js: the portal's team-library
+ * sync re-adds any S3 job missing from localStorage, so a bare removal here
+ * resurrects on the next portal visit. */
+const HIDDEN_KEY = "mc_library_hidden_v1";
+function hiddenAdd(jobId) {
+  let ids = [];
+  try { ids = JSON.parse(localStorage.getItem(HIDDEN_KEY)) || []; } catch (e) { /* fresh list */ }
+  ids = [jobId, ...ids.filter(id => id !== jobId)];
+  localStorage.setItem(HIDDEN_KEY, JSON.stringify(ids.slice(0, 500)));
+}
+
 function libRemove(jobId) {
+  hiddenAdd(jobId);              // survive the portal's team-library sync
   libSave(libLoad().filter(i => i.jobId !== jobId));
   renderLibrary();
 }
