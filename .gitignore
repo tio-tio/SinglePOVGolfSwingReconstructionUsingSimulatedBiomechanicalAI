@@ -84,3 +84,6 @@ Unreal/
 *_accessKeys.csv
 aws_credentials*
 credentials.csv
+
+# local QA harness + screenshots for the web front end (never deploy)
+deploy/web/_preview/

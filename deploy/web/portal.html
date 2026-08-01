@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0c5c3a">
 <title>MotionCaddie — your swing, measured</title>
-<link rel="stylesheet" href="styles.css?v=20260801a">
+<link rel="stylesheet" href="styles.css?v=20260801b">
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
 <style>
 /* portal-only touches; everything else comes from the shared styles.css */
@@ -98,6 +98,15 @@
 <section id="screen-analyze" class="screen" hidden>
   <div class="analyze-panel card">
     <h2 id="analyze-title">Analyzing your swing</h2>
+    <!-- live-processing preview (cloud path only, shown via .analyze-live):
+         a canned SAMPLE swing loop — clearly not the user's upload. The 7-step
+         <ol> below stays in the DOM as the screen-reader copy + source of the
+         advancing step line. -->
+    <div class="analyze-preview-wrap" aria-hidden="true">
+      <canvas id="analyze-preview" width="480" height="300"></canvas>
+      <p class="analyze-preview-caption">Sample swing preview — yours is processing</p>
+      <p id="analyze-step-line"></p>
+    </div>
     <ol id="analyze-steps" class="analyze-steps">
       <li data-step="1"><span class="check"></span><div><strong>Reading the video</strong><span>Pulling frames from the clip</span></div></li>
       <li data-step="2"><span class="check"></span><div><strong>Finding the body</strong><span>Placing 2D markers on every joint, every frame</span></div></li>

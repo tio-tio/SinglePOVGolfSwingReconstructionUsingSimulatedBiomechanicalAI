@@ -81,6 +81,8 @@ const state = {
   bundle: null,       // loaded clip bundle for the results screen
   bundlePromise: null,
   viewer: null,       // Replay3D instance
+  analyzePreview: null,  // sample-swing viewer on the analyze screen
+  analyzeYaw: null,      // yaw-drift interval for its canvas fallback
 };
 window.__MC_STATE__ = state;  // debug/diagnostics handle (console + tooling)
 
@@ -109,6 +111,7 @@ const SCREENS = { pick: "#screen-pick", analyze: "#screen-analyze", results: "#s
 const NAV_ORDER = ["pick", "analyze", "results"];
 
 function goto(screen) {
+  if (screen !== "analyze") stopAnalyzePreview();   // free the GL context on any nav away
   for (const [name, sel] of Object.entries(SCREENS)) {
     $(sel).hidden = name !== screen;
   }
@@ -265,14 +268,63 @@ function showIllustrativeFallback() {
 
 /* analyze screen paced for the REAL pipeline: steps advance slowly, the last
  * one keeps pulsing until the result opens (or the wait falls back). */
+
+/* ---- analyze-screen sample preview (canned swing loop) --------------------
+ * While the cloud pipeline runs, loop the deployed demo swing (assets/269) as
+ * a rotating clay-mannequin preview. Clearly captioned as a SAMPLE — it is
+ * NOT the user's upload being reconstructed live. Viewer selection mirrors
+ * the results screen: WebGL capsule viewer (slow auto-rotate) with the
+ * canvas skeleton as fallback (gentle yaw drift). Decorative only — any
+ * failure just leaves the plain screen. NB: the demo-clip path (runAnalyze)
+ * keeps the classic 7-item checklist; only the cloud wait goes .analyze-live. */
+function stopAnalyzePreview() {
+  if (state.analyzeYaw) { clearInterval(state.analyzeYaw); state.analyzeYaw = null; }
+  if (state.analyzePreview) {
+    if (typeof state.analyzePreview.destroy === "function") state.analyzePreview.destroy();
+    state.analyzePreview = null;
+  }
+  const panel = document.querySelector(".analyze-panel");
+  if (panel) panel.classList.remove("analyze-live");
+}
+
+async function startAnalyzePreview(seq) {
+  stopAnalyzePreview();
+  const panel = document.querySelector(".analyze-panel");
+  if (!panel || !document.getElementById("analyze-preview")) return;
+  panel.classList.add("analyze-live");
+  try {
+    const data = await fetch("assets/269/replay_3d.json").then(r => r.json());
+    if (seq !== navSeq || !panel.classList.contains("analyze-live")) return;
+    const canvas = resetCanvas("#analyze-preview");
+    const Cap = window.CapsuleViewer3D;
+    if (Cap && Cap.supported()) {
+      const v = new Cap(canvas, data, {});
+      v.controls.autoRotate = true;             // slow turntable (caller-side config)
+      v.controls.autoRotateSpeed = 0.8;
+      state.analyzePreview = v;
+    } else {
+      const ui = { scrub: document.createElement("input"),
+                   playBtn: document.createElement("button"),
+                   label: document.createElement("span") };
+      const v = new Replay3D(canvas, data, ui);
+      state.analyzePreview = v;
+      state.analyzeYaw = setInterval(() => { v.yaw += 0.004; }, 33);
+    }
+  } catch (e) { /* decorative — never block the analyze screen */ }
+}
+
 function startCloudAnalyzeUI(seq) {
   goto("analyze");
   const note = $("#analyze-cloud-note"), elapsed = $("#analyze-elapsed");
   if (note) note.hidden = false;
   const items = [...document.querySelectorAll("#analyze-steps li")];
   items.forEach(li => li.classList.remove("doing", "done"));
+  const line = $("#analyze-step-line");
+  startAnalyzePreview(seq);
   const t0 = Date.now();
   const timer = setInterval(() => {
+    // NB: no stopAnalyzePreview() here — a NEWER analyze run may own the
+    // preview by now; every real navigation away goes through goto(), which stops it.
     if (seq !== navSeq) { clearInterval(timer); if (note) note.hidden = true; return; }
     if (elapsed) {
       const s = Math.round((Date.now() - t0) / 1000);
@@ -285,12 +337,24 @@ function startCloudAnalyzeUI(seq) {
     if (i > 0) items[i - 1].classList.replace("doing", "done");
     if (i < items.length) {
       items[i].classList.add("doing");
+      if (line) {                                  // one quiet advancing line (same copy)
+        const strong = items[i].querySelector("strong");
+        const small = items[i].querySelector("div > span");  // NOT "div span": scoped
+        // selectors match against the document, so the outer panel div would
+        // make the empty .check span the first hit
+        line.classList.remove("show");
+        void line.offsetWidth;                     // restart the fade transition
+        line.textContent = (strong ? strong.textContent : "") +
+                           (small ? " — " + small.textContent : "");
+        line.classList.add("show");
+      }
       i += 1;
       if (i < items.length) setTimeout(tick, 15000);   // ~90s across 7 real steps
     }
   };
   tick();
 }
+state.debugAnalyze = () => startCloudAnalyzeUI(++navSeq);  // console/QA hook (same spirit as __MC_STATE__)
 
 /* ---- the results-screen banner doubles as the upload progress line ---- */
 function setUploadBanner(phase, jobId) {

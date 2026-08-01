@@ -99,6 +99,22 @@ a.brand:hover .brand-name { text-decoration: underline; }
 .analyze-steps li.doing, .analyze-steps li.done { opacity: 1; }
 .analyze-steps strong { display: block; font-size: 15px; }
 .analyze-steps span:not(.check) { font-size: 13px; color: var(--muted); }
+
+/* live cloud processing (.analyze-live, set by startCloudAnalyzeUI): sample
+   3D swing loop + one advancing step line replace the 7-item checklist.
+   The <ol> stays in the DOM (visually hidden below) for screen readers and
+   as the single source of the step copy. Demo clips keep the classic list. */
+.analyze-preview-wrap { display: none; }
+.analyze-live .analyze-preview-wrap { display: block; margin: 4px 0 2px; }
+#analyze-preview { display: block; width: 100%; height: 300px; border-radius: 12px;
+  background: #0f2019; opacity: .85; }        /* ghosted, recedes behind the copy */
+.analyze-preview-caption { margin: 8px 0 0; text-align: center; font-size: 13px;
+  color: var(--muted); }
+#analyze-step-line { min-height: 22px; margin: 14px 0 0; font-size: 15px;
+  font-weight: 600; color: var(--green); opacity: 0; transition: opacity .5s ease; }
+#analyze-step-line.show { opacity: 1; }
+.analyze-live .analyze-steps { position: absolute; width: 1px; height: 1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .check {
   flex: 0 0 auto; width: 22px; height: 22px; margin-top: 2px; border-radius: 50%;
   border: 2px solid #dfe1dc; position: relative; transition: all .25s;
