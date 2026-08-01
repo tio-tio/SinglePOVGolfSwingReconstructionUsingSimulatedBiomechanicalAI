@@ -361,7 +361,7 @@ function renderLibrary() {
       : `<span class="upload-badge">Processing<span class="pulse">…</span></span>`;
     return `<div class="dash-swing" data-job="${esc(it.jobId)}" data-ready="${ready}">
       <span class="dash-swing-name" title="${esc(it.name)}">${esc(it.name)}</span>
-      <span class="muted small">${esc(date)}</span>${badge}
+      <span class="dash-swing-date muted small">${esc(date)}</span>${badge}
       ${ready ? `<button type="button" class="btn-ghost small lib-open">Open result</button>` : ""}
       <button type="button" class="btn-ghost small lib-rename" title="Rename this swing"
               aria-label="Rename ${esc(it.name)}">✎</button>
