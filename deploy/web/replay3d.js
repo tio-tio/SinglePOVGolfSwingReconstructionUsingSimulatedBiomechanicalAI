@@ -72,6 +72,14 @@ class CapsuleViewer3D {
     this.frames = raw.map(fr => fr.map(p => new THREE.Vector3(
       (p[0] - mh[0]) * scale, (p[1] - mh[1]) * scale, (p[2] - mh[2]) * scale)));
     this.nJoints = data.frames[0].length;
+    // club: schematic two-pole placeholder (both wrists -> estimated clubhead).
+    // DELIBERATE: we do not track the club — the clubhead is a forearm
+    // extrapolation (web_artifacts.py) and the wrists are lifted independently,
+    // so we show an honest schematic rather than a single solid shaft that
+    // would imply club tracking we don't have. Single-shaft / lead-wrist-anchor
+    // variants were prototyped 2026-08-01 and deliberately set aside.
+    // TODO(v2-club-tracking): replace with a faithful club once measured
+    // (see DEPLOYMENT_PLAN.md roadmap note, 2026-08-01).
     this.clubBones = (data.bones || []).filter(b => b.a === 17 || b.b === 17);
 
     // body-only bounding radius (fixes the clubhead-inflates-framing issue)
@@ -121,14 +129,62 @@ class CapsuleViewer3D {
     this._raf = requestAnimationFrame(this._loop);
   }
 
+  // ---- stylized fairway set-dressing (procedural, generated at runtime — no
+  // external assets, no loaders; muted palette derived from the brand greens
+  // so the clay mannequin stays the visual subject) -------------------------
+
+  _grassTexture() {
+    // muted sage fairway with mow-stripe banding + sparse tonal speckle.
+    // Deliberately illustrative, not photo turf.
+    const S = 512, c = document.createElement("canvas");
+    c.width = c.height = S;
+    const g = c.getContext("2d");
+    g.fillStyle = "#52704f";                       // desaturated forest green
+    g.fillRect(0, 0, S, S);
+    const band = S / 8;                            // 4 stripe pairs per tile
+    for (let i = 0; i < 8; i++) {
+      g.fillStyle = i % 2 ? "rgba(250,249,245,0.05)" : "rgba(16,38,24,0.07)";
+      g.fillRect(i * band, 0, band, S);
+    }
+    for (let i = 0; i < 2600; i++) {               // hand-made grain, not noise-photo
+      const l = Math.random();
+      g.fillStyle = l > 0.5 ? `rgba(214,226,182,${0.04 + 0.05 * l})`
+                            : `rgba(20,40,26,${0.04 + 0.05 * l})`;
+      g.fillRect(Math.random() * S, Math.random() * S,
+                 1.5 + Math.random() * 2, 1 + Math.random() * 1.5);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    return tex;
+  }
+
+  _skyTexture() {
+    // vertical gradient: muted bottle-green zenith -> parchment haze horizon.
+    // The horizon color doubles as the fog color so ground and sky meet seamlessly.
+    const c = document.createElement("canvas");
+    c.width = 1; c.height = 256;
+    const g = c.getContext("2d");
+    const grad = g.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0.0, "#2c4a3c");
+    grad.addColorStop(0.55, "#57705c");
+    grad.addColorStop(1.0, "#cfd2bd");
+    g.fillStyle = grad; g.fillRect(0, 0, 1, 256);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
   _initScene(floorY) {
     const r = this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
 
+    const HORIZON = 0xcfd2bd;                      // parchment haze (matches sky bottom)
     const s = this.scene = new THREE.Scene();
-    s.background = new THREE.Color(0x0f2019);
+    s.background = new THREE.Color(HORIZON);       // fallback behind the sky dome
 
     const far = Math.max(100, this.ballExtent * 4);   // keep a long ball arc in frustum
     const cam = this.camera = new THREE.PerspectiveCamera(38, 1, 0.01, far);
@@ -153,20 +209,36 @@ class CapsuleViewer3D {
     Object.assign(key.shadow.camera, { left: -sc, right: sc, top: sc, bottom: -sc, near: 0.1, far: 20 });
     s.add(key);
 
-    // subtle ground to catch a shadow (wide enough for the ball arc if present)
-    const gsz = Math.max(this.radius * 8, this.ballExtent * 2.6);
+    // stylized fairway ground (wide enough for the ball arc if present; fog
+    // fades it out long before the plane's hard edge). Same floor Y as the
+    // shadow always used, so the feet sit exactly ON the grass.
+    const gsz = Math.max(this.radius * 40, this.ballExtent * 2.6);
+    const grass = this._grassTexture();
+    grass.repeat.set(gsz / 12, gsz / 12);          // one 8-band tile ≈ 12 m
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(gsz, gsz),
-      new THREE.MeshStandardMaterial({ color: 0x16281f, roughness: 1.0 }));
+      new THREE.MeshStandardMaterial({ map: grass, roughness: 1.0 }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = floorY - 0.02;
     ground.receiveShadow = true;
     s.add(ground);
+
+    // haze: ground dissolves into the horizon instead of ending at an edge.
+    // near stays beyond the orbit's max zoom-out so the mannequin never fogs.
+    s.fog = new THREE.Fog(HORIZON, gsz * 0.2, gsz * 0.55);
+
+    // sky dome (gradient, unlit, unfogged) — inside the camera frustum, outside the fog
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(Math.min(far * 0.9, gsz * 0.9), 24, 12),
+      new THREE.MeshBasicMaterial({ map: this._skyTexture(), side: THREE.BackSide,
+                                    fog: false, depthWrite: false }));
+    sky.position.y = floorY;
+    s.add(sky);
   }
 
   _buildBody() {
     const skin = new THREE.MeshStandardMaterial({ color: 0xbcb6a8, roughness: 0.85, metalness: 0.0 });
-    const clubMat = new THREE.MeshStandardMaterial({ color: 0x3a4048, roughness: 0.6, metalness: 0.1 });
+    const clubMat = new THREE.MeshStandardMaterial({ color: 0x8e9089, roughness: 1.0, metalness: 0.0 });
     const body = this.body = new THREE.Group();
     this.scene.add(body);
     const add = (mesh) => { mesh.castShadow = true; body.add(mesh); return mesh; };
@@ -188,10 +260,11 @@ class CapsuleViewer3D {
     // torso box (hip_center 0 -> thorax 8), oriented to the shoulder line each frame
     this.torso = add(new THREE.Mesh(new THREE.BoxGeometry(0.32, 1, 0.20), skin));
     this.torso.matrixAutoUpdate = false;
-    // club (thin), excluded from framing
+    // club: muted thin two-pole placeholder, excluded from framing (see the
+    // constructor note — deliberately schematic, not a tracked club).
     this.club = [];
     for (const b of this.clubBones) {
-      const m = add(new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 1, 10, 1), clubMat));
+      const m = add(new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.009, 1, 10, 1), clubMat));
       m.castShadow = false;
       this.club.push({ mesh: m, a: b.a, b: b.b });
     }

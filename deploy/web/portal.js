@@ -854,12 +854,19 @@ class Replay3D {
     const fr = this.data.frames[this.frame];
     const proj = fr.map(p => this._project(p));
 
+    // club bones (either end = estimated clubhead 17) draw as a muted thin
+    // two-pole placeholder. DELIBERATE: we do not track the club — the clubhead
+    // is a forearm extrapolation (web_artifacts.py) — so this stays an honest
+    // schematic rather than implying tracking we don't have.
+    // TODO(v2-club-tracking): faithful club once measured (DEPLOYMENT_PLAN.md).
+    const isClub = (b) => b.a === 17 || b.b === 17;
+
     const bones = [...this.data.bones].sort((p, q) =>
       Math.min(proj[p.a][2], proj[p.b][2]) - Math.min(proj[q.a][2], proj[q.b][2]));
     for (const bone of bones) {
       const a = proj[bone.a], b = proj[bone.b];
-      ctx.strokeStyle = bone.color;
-      ctx.lineWidth = 3.5 * Math.min(a[2], b[2]);
+      ctx.strokeStyle = isClub(bone) ? "#8e9089" : bone.color;
+      ctx.lineWidth = (isClub(bone) ? 2.0 : 3.5) * Math.min(a[2], b[2]);
       ctx.lineCap = "round";
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
     }

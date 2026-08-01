@@ -2,7 +2,7 @@
 
 **Owner today:** Austin · **Proposed next owner:** Theo
 **Status:** static demo + coach chat + **prototype** upload and account/consent flows working locally; S3 hosting + real backend not started
-**Last updated:** 2026-07-05
+**Last updated:** 2026-08-01
 
 ---
 
@@ -182,6 +182,32 @@ dependency-free canvas skeleton (`Replay3D`). The WebGL/canvas capsule viewers f
 the **body joints only**, which also fixes the earlier bug where the extrapolated
 clubhead shrank/offset the figure. The geometry recipe (limb radii, joint blobs, torso)
 mirrors `Scripts/blender_mocap.py`, so all three views read as the same mannequin.
+
+---
+
+## 2026-08-01 — Club rendering: honest placeholder, faithful club deferred to v2
+
+The 3D replay draws the club as a schematic **two-pole link** (each wrist → the
+estimated clubhead) in a muted thin stroke (`#8e9089`), consistently across all
+four viewers (`replay3d.js` WebGL, the `app.js`/`portal.js` canvas fallbacks,
+`replay_capsule.html`). This is a **deliberate product call**, not a rendering
+bug: the clubhead is a lead-forearm extrapolation (`web_artifacts.py`), not a
+tracked point, and the lifter places the wrists independently — so a single
+solid shaft would imply club tracking we don't do (the coach chat explicitly
+refuses club/face/plane questions for the same reason; that refusal list is the
+sibling of this decision and neither should change without the other).
+
+**Roadmap (v2): faithful club rendering is blocked on real club tracking** —
+e.g. shaft keypoints from the 2D detector or a club-aware lifter. When that
+lands: replace the placeholder at the `TODO(v2-club-tracking)` markers in the
+four viewers, and shrink the chat's unmeasured-topics list accordingly.
+
+Prototyped and deliberately set aside (2026-08-01, screenshots in local
+`_preview/`, not synced): a single-shaft render from the wrist midpoint, and a
+lead-wrist-anchored variant (geometrically exact w.r.t. the extrapolation —
+zero hand-to-shaft gap). Both looked cleaner but over-claimed; kept the honest
+fork with a calmer visual treatment (was near-black `0x3a4048` @ 0.012/0.014,
+now muted `#8e9089` @ 0.007/0.009 so it reads as annotation, not measurement).
 
 ---
 
