@@ -277,6 +277,19 @@ async function syncTeamLibrary() {
         changed = true;
       }
     }
+    // prune entries whose job no longer exists server-side (teammate deleted
+    // it, or the 90-day TTL expired). Without this a deleted swing stays
+    // "Ready" in every OTHER browser forever — opening it 404s and the chat
+    // falls back to the offline read. Keep fresh uploads (<20 min): they may
+    // not have hit 03_outputs yet.
+    const serverIds = new Set(jobs.map(j => j.job_id));
+    const pruned = local.filter(it =>
+      !isUploadedJob(it.jobId) || serverIds.has(it.jobId) ||
+      Date.now() - new Date(it.date).getTime() < 20 * 60 * 1000);
+    if (pruned.length !== local.length) {
+      local.length = 0; local.push(...pruned);
+      changed = true;
+    }
     if (changed) {
       local.sort((a, b) => new Date(b.date) - new Date(a.date));
       libSave(local.slice(0, 200));
