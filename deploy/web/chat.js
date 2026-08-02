@@ -85,7 +85,8 @@ const Chat = (() => {
         plain: m.plain || r.label, in: m.in || "", lo: m.lo || "", hi: m.hi || "",
       };
     }
-    CLIPDATA[clip.id] = { name: clip.title, club: clip.club, view: clip.view, ind };
+    CLIPDATA[clip.id] = { name: clip.title, club: clip.club, view: clip.view,
+                          date: clip.date || null, ind };
   }
 
   /* ---- accessors ---- */
@@ -546,6 +547,24 @@ const Chat = (() => {
     try { res = await askChat(q); }
     catch (e) { res = respond(q); res.answer += "  (couldn't reach the live coach — showing the offline read)"; }
     typing.remove(); addBot(res);
+    return res;
+  }
+
+  /* "what changed since last time" auto-brief (chat v2 §4a): one canned turn
+   * through the normal live /chat path when a job opens and the library has
+   * other swings. Runs at most once per swing per page load; the transcript
+   * keeps the exchange so follow-ups have context, and the caller gets the
+   * answer text for the results banner. Never fires on the offline mock. */
+  const BRIEFED = new Set();
+  async function autoBrief(onAnswer) {
+    if (!liveFor(ACTIVE) || BRIEFED.has(ACTIVE)) return null;
+    if (Object.keys(CLIPDATA).filter(c => c !== ACTIVE).length === 0) return null;
+    BRIEFED.add(ACTIVE);
+    try {
+      const res = await ask("In one or two sentences: what changed in this swing versus my previous session?");
+      if (res && res.answer && onAnswer) onAnswer(res.answer);
+      return res;
+    } catch (e) { return null; }
   }
   function greet() {
     const c = CLIPDATA[ACTIVE];
@@ -559,7 +578,12 @@ const Chat = (() => {
   function populateCompare() {
     if (!dom.compare) return;
     dom.compare.innerHTML = '<option value="">— none —</option>';
-    Object.keys(CLIPDATA).filter(c => c !== ACTIVE).forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = CLIPDATA[c].name; dom.compare.append(o); });
+    Object.keys(CLIPDATA).filter(c => c !== ACTIVE).forEach(c => {
+      const o = document.createElement("option"); o.value = c;
+      const d = CLIPDATA[c].date ? ` · ${new Date(CLIPDATA[c].date).toLocaleDateString()}` : "";
+      o.textContent = CLIPDATA[c].name + d;
+      dom.compare.append(o);
+    });
     dom.compare.value = COMPARE || "";
   }
 
@@ -597,5 +621,6 @@ const Chat = (() => {
                            : "offline preview · in-page coach");
       populateCompare(); greet();
     },
+    autoBrief,
   };
 })();

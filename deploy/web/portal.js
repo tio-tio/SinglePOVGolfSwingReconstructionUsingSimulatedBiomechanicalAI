@@ -74,6 +74,40 @@ function hiddenAdd(jobId) {
  * clips) exists only in this browser and can't be server-deleted */
 const isUploadedJob = (jobId) => /^[0-9a-f]{32}$/.test(jobId);
 
+/* ---------------- practice sessions (chat v2, CHAT_V2_PLAN.md §1) ----------
+ * A session = one practice visit. This browser keeps a "current session" id
+ * alive for 2 h past the last upload; it rides to the backend as object
+ * metadata so every device (and the coach) groups the same way. */
+const SESSION_KEY = "mc_session_v1";
+const SESSION_GAP_MS = 2 * 3600 * 1000;
+
+function currentSession() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) { /* fresh */ }
+  const now = Date.now();
+  if (!s || !s.id || now - (s.last || 0) > SESSION_GAP_MS) {
+    s = { id: Array.from(crypto.getRandomValues(new Uint8Array(6)))
+            .map(b => b.toString(16).padStart(2, "0")).join(""), last: now };
+  }
+  s.last = now;
+  localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  return s;
+}
+
+/* location for the weather backfill — ONLY when the browser permission is
+ * already granted. Never prompts: sharing location stays the user's explicit
+ * choice made in browser settings, not a surprise dialog mid-upload. */
+async function grantedCoords() {
+  try {
+    if (!navigator.permissions || !navigator.geolocation) return null;
+    const st = await navigator.permissions.query({ name: "geolocation" });
+    if (st.state !== "granted") return null;
+    return await new Promise(res => navigator.geolocation.getCurrentPosition(
+      p => res({ lat: p.coords.latitude.toFixed(4), lon: p.coords.longitude.toFixed(4) }),
+      () => res(null), { timeout: 2500, maximumAge: 10 * 60 * 1000 }));
+  } catch (e) { return null; }
+}
+
 async function libRemove(jobId) {
   const name = libName(jobId) || "this swing";
   if (isUploadedJob(jobId) &&
@@ -231,8 +265,15 @@ async function syncTeamLibrary() {
       if (mine) {   // upgrade placeholder names/stale status, keep local names
         if ((mine.name === "shared swing" || !mine.name) && j.name) { mine.name = j.name; changed = true; }
         if (mine.status !== "ready") { mine.status = "ready"; changed = true; }
+        // session/context fields from job_meta (uploaded_at, session, notes)
+        for (const [k, lk] of [["session_id", "sessionId"], ["session_label", "sessionLabel"],
+                               ["club", "club"], ["notes", "notes"]]) {
+          if (j[k] && mine[lk] !== j[k]) { mine[lk] = j[k]; changed = true; }
+        }
       } else {
-        local.push({ jobId: j.job_id, name: j.name, date: j.date, status: "ready" });
+        local.push({ jobId: j.job_id, name: j.name, date: j.date, status: "ready",
+                     sessionId: j.session_id, sessionLabel: j.session_label,
+                     club: j.club, notes: j.notes });
         changed = true;
       }
     }
@@ -277,11 +318,15 @@ async function startUpload() {
   const seq = ++navSeq;
   startCloudAnalyzeUI(seq);
   try {
-    // 1 · presigned slot
+    // 1 · presigned slot (+ session id and, when already permitted, location
+    // for the weather backfill — both ride as S3 object metadata)
+    const sess = currentSession();
+    const coords = await grantedCoords();
     const pr = await fetch(window.UPLOAD_URL, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ filename: upload.name,
-                             content_type: upload.file.type || "video/mp4" }),
+                             content_type: upload.file.type || "video/mp4",
+                             session: { session_id: sess.id, ...(coords || {}) } }),
     });
     if (!pr.ok) throw new Error("presign http " + pr.status);
     const slot = await pr.json();
@@ -293,7 +338,7 @@ async function startUpload() {
     if (!up.ok) throw new Error("s3 http " + up.status);
     // 3 · track + wait for the pipeline (~2-3 min; poll up to 8)
     state.pendingJob = slot.job_id;
-    libAdd({ jobId: slot.job_id, name: upload.name,
+    libAdd({ jobId: slot.job_id, name: upload.name, sessionId: slot.session_id || sess.id,
              date: new Date().toISOString(), status: "processing" });
     const ready = await pollJob(slot.job_id, 96, 5000);
     if (seq !== navSeq) return;              // user navigated away meanwhile
@@ -458,7 +503,7 @@ function renderLibrary() {
       — private during the pilot. Sign in with the dev account to view.</p>`;
     return;
   }
-  wrap.innerHTML = items.map(it => {
+  const rowHTML = (it) => {
     const date = new Date(it.date).toLocaleDateString();
     const ready = it.status === "ready";
     const badge = ready ? `<span class="upload-badge ok">Ready</span>`
@@ -476,6 +521,33 @@ function renderLibrary() {
         : `<button type="button" class="btn-ghost small lib-remove" title="Remove from this list"
               aria-label="Remove ${esc(it.name)} from this list">✕</button>`}
     </div>`;
+  };
+  // group into practice sessions: shared sessionId wins; otherwise swings
+  // within 2 h of the previous one (newest-first walk) share a visit — the
+  // same rule the backend's clustering uses, so chat and library agree
+  const sorted = [...items].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  const groups = [];
+  for (const it of sorted) {
+    const g = groups[groups.length - 1];
+    const sameDeclared = g && it.sessionId && g.sessionId && it.sessionId === g.sessionId;
+    const sameByGap = g && !it.sessionId && !g.sessionId && g.lastDate && it.date &&
+      (new Date(g.lastDate) - new Date(it.date)) <= 2 * 3600 * 1000;
+    if (sameDeclared || sameByGap) {
+      g.items.push(it); g.lastDate = it.date;
+      if (!g.label && it.sessionLabel) g.label = it.sessionLabel;
+    } else {
+      groups.push({ sessionId: it.sessionId || null, label: it.sessionLabel || null,
+                    firstDate: it.date, lastDate: it.date, items: [it] });
+    }
+  }
+  wrap.innerHTML = groups.map(g => {
+    const when = g.firstDate
+      ? new Date(g.firstDate).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+      : "undated";
+    const head = `<div class="muted small session-head" style="margin:10px 0 4px;font-weight:600">
+        ${esc(g.label || "Session")} · ${esc(when)} · ${g.items.length} swing${g.items.length > 1 ? "s" : ""}
+      </div>`;
+    return head + g.items.map(rowHTML).join("");
   }).join("");
   wrap.querySelectorAll(".lib-open").forEach(b =>
     b.addEventListener("click", () => openJob(b.closest(".dash-swing").dataset.job)));
@@ -525,18 +597,30 @@ async function jobMetricsFor(jobId) {
 
 /* register the active job (and its ready siblings) with the grounded chat */
 async function activateChat(jobId) {
-  const entries = [{ jobId, name: libName(jobId) || "this swing" },
+  const mine = libLoad().find(i => i.jobId === jobId);
+  const entries = [{ jobId, name: libName(jobId) || "this swing", date: mine && mine.date },
                    // cap chat compare prefetch — one metrics.json per sibling
-                   ...otherReadyJobs().slice(0, 12).map(i => ({ jobId: i.jobId, name: i.name }))];
+                   ...otherReadyJobs().slice(0, 12).map(i => ({ jobId: i.jobId, name: i.name,
+                                                               date: i.date }))];
   const clips = [], byId = {};
   for (const e of entries) {
     try {
       byId[e.jobId] = await jobMetricsFor(e.jobId);
-      clips.push({ id: e.jobId, title: `your swing (${e.name})`, club: "", view: "" });
+      clips.push({ id: e.jobId, title: `your swing (${e.name})`, club: "", view: "",
+                   date: e.date || null });
     } catch (err) { /* a job without metrics just won't be chat-enabled */ }
   }
   Chat.setLibrary(clips, byId);
   Chat.activate(jobId);
+  // "what changed since last time" — one live turn, result on the banner too
+  Chat.autoBrief(text => {
+    const banner = $("#results-banner"), span = $("#results-banner-text");
+    if (!banner || !span || state.selectedId !== jobId) return;
+    const brief = text.replace(/\s+/g, " ").trim();
+    span.innerHTML = `<strong>Since last session:</strong> ${esc(brief.slice(0, 260))}` +
+      (brief.length > 260 ? "…" : "") + ` <span class="muted small">— ask the coach for detail</span>`;
+    banner.hidden = false;
+  });
 }
 
 async function openJob(jobId) {
