@@ -294,6 +294,8 @@ def _t_estimate_ball_flight(ctx: SwingContext, inp: dict) -> dict:
             if is_name else "amateur"
     overrides = {k: inp[k] for k in ("ball_speed_mph", "launch_angle_deg",
                                      "backspin_rpm", "sidespin_rpm") if k in inp}
+    conditions = {k: inp[k] for k in ("temp_c", "humidity_pct", "elevation_m",
+                                      "wind_mph", "wind_dir_deg") if k in inp}
 
     # swing-aware nudge: THIS swing's measured hand speed vs the GolfDB pro
     # median scales the assumed ball speed (capped ±12% inside estimate_for_club).
@@ -304,7 +306,8 @@ def _t_estimate_ball_flight(ctx: SwingContext, inp: dict) -> dict:
     if hs and isinstance(hs.get("value"), (int, float)) and hs.get("pro_median"):
         speed_scale = float(hs["value"]) / float(hs["pro_median"])
 
-    res = BF.estimate_for_club(club, tier, overrides, speed_scale=speed_scale)
+    res = BF.estimate_for_club(club, tier, overrides, speed_scale=speed_scale,
+                               conditions=conditions or None)
     if res.get("estimated") and speed_scale != 1.0 and \
             "ball_speed_mph" not in res["assumed_launch"]["overridden_by_golfer"]:
         pct = round((min(max(speed_scale, 0.88), 1.12) - 1.0) * 100)
@@ -557,6 +560,16 @@ TOOLS: dict[str, tuple[dict, ToolFn]] = {
             "backspin_rpm": {"type": "number", "description": "golfer-stated override"},
             "sidespin_rpm": {"type": "number",
                              "description": "golfer-stated override; >0 fade, <0 draw"},
+            "temp_c": {"type": "number",
+                       "description": "playing conditions: air temperature in Celsius "
+                                      "(golfer-stated or from recorded weather)"},
+            "humidity_pct": {"type": "number", "description": "relative humidity 0-100"},
+            "elevation_m": {"type": "number",
+                            "description": "course elevation above sea level, metres"},
+            "wind_mph": {"type": "number", "description": "wind speed in mph"},
+            "wind_dir_deg": {"type": "number",
+                             "description": "direction the wind blows TOWARD: 0 = tailwind "
+                                            "(helping), 180 = headwind, 90 = left-to-right"},
         }, "additionalProperties": False},
     }, _t_estimate_ball_flight),
     "list_sessions": ({

@@ -36,9 +36,38 @@ const BallFlight = (() => {
   };
   const CLUB_ALIASES = { iron: "7 iron", wood: "3 wood" };  // scorecard vocabulary
 
+  /* ------------------ playing conditions (mirror ball_flight.py) ----------
+   * airDensity(): ideal gas + humid-air vapor correction; defaults reproduce
+   * the historic RHO constant. Wind here is the ALONG-LINE component only
+   * (tail/head) — this card's sim is 2D (downrange x height); crosswind curve
+   * is the coach's 3D tool's job. */
+  function airDensity(tempC = 15, pressureHpa = null, humidityPct = 0, elevM = 0) {
+    const t = Math.min(Math.max(tempC, -20), 50);
+    const p = (pressureHpa != null ? pressureHpa
+      : 1013.25 * Math.pow(1 - 2.25577e-5 * Math.min(Math.max(elevM, -100), 4000), 5.25588)) * 100;
+    const rh = Math.min(Math.max(humidityPct, 0), 100) / 100;
+    const pSat = 610.94 * Math.exp(17.625 * t / (t + 243.04));
+    const pv = rh * pSat, pd = p - pv, tK = t + 273.15;
+    return pd / (287.058 * tK) + pv / (461.495 * tK);
+  }
+  /* conditions: { tempC?, pressureHpa?, humidityPct?, elevM?, windMph?,
+   *               windDirDeg? } — windDirDeg is where the wind blows TOWARD
+   * (0 = tailwind, 180 = headwind); only its along-line component acts here. */
+  function condPhysics(conditions) {
+    const c = conditions || {};
+    const rho = (c.tempC != null || c.pressureHpa != null || c.humidityPct != null || c.elevM != null)
+      ? airDensity(c.tempC ?? 15, c.pressureHpa ?? null, c.humidityPct ?? 0, c.elevM ?? 0)
+      : RHO;
+    const windY = c.windMph
+      ? Math.min(Math.max(c.windMph, 0), 40) * MPH * Math.cos((c.windDirDeg ?? 0) * Math.PI / 180)
+      : 0;
+    return { rho, windY, nonstandard: !!windY || Math.abs(rho - RHO) > 0.001 };
+  }
+
   /* ------------------------- Phys-Q polynomial sim ------------------------ */
-  function simulatePhysQ(ballMph, launchDeg, backRpm) {
+  function simulatePhysQ(ballMph, launchDeg, backRpm, conditions) {
     const dt = 0.01;
+    const { rho, windY } = condPhysics(conditions);
     let v = ballMph * MPH;
     const la = launchDeg * Math.PI / 180;
     let vy = v * Math.cos(la), vz = v * Math.sin(la);
@@ -46,17 +75,19 @@ const BallFlight = (() => {
     let y = 0, z = 0.01, apex = z, t = 0;
     const traj = [[0, 0]];
     while (t < 15) {
-      const vmag = Math.hypot(vy, vz);
+      // aerodynamics act on the air-relative velocity (ground velocity - wind)
+      const ay = vy - windY, az = vz;
+      const vmag = Math.hypot(ay, az) || 1e-9;
       const S = R * Math.abs(wx) / vmag;
       const CD = 0.1304 + 0.9287 * S - 0.8259 * S * S;
       const CL = 0.0504 + 1.2031 * S - 1.1490 * S * S;
       const CM = 0.01 * S;
-      const q = 0.5 * RHO * vmag * vmag;
+      const q = 0.5 * rho * vmag * vmag;
       // Magnus lift = (w x v)/|w x v|: with w=+x and v in the y-z plane this is
-      // (-vz, vy)/vmag in (y, z)
+      // (-az, ay)/vmag in (y, z)
       const FL = CL * q * A, FD = CD * q * A;
-      const fy = FL * (-vz / vmag) - FD * (vy / vmag);
-      const fz = FL * (vy / vmag) - FD * (vz / vmag) - M * G;
+      const fy = FL * (-az / vmag) - FD * (ay / vmag);
+      const fz = FL * (ay / vmag) - FD * (az / vmag) - M * G;
       wx -= dt * (CM * q * 2 * R * A) / I * Math.sign(wx);
       vy += dt * fy / M; vz += dt * fz / M;
       const zp = z;
@@ -159,15 +190,19 @@ const BallFlight = (() => {
     const scale = Math.min(Math.max(you / median, 0.88), 1.12);
     return { scale, pct: Math.round((scale - 1) * 100) };
   }
-  async function estimate(club, tier, metricsRows, handSpeed) {
+  async function estimate(club, tier, metricsRows, handSpeed, conditions) {
     const key = normClub(club) || "driver";
     const [bs0, la, spin] = CLUBS[key][tier] || CLUBS[key].tour;
     const nudge = speedScaleFrom(metricsRows, handSpeed);
     const bs = bs0 * nudge.scale;
+    const cond = condPhysics(conditions);
     const nn = await loadNN();
-    const r = (nn && inEnvelope(nn, bs, la, spin))
-      ? simulateNN(nn, bs, la, spin) : simulatePhysQ(bs, la, spin);
-    return { ...r, club: key, tier, ballMph: bs, launchDeg: la, spinRpm: spin, nudge };
+    // the NN was trained at standard density with no wind — non-standard
+    // conditions force the Phys-Q integrator (same rule as ball_flight.py)
+    const r = (nn && inEnvelope(nn, bs, la, spin) && !cond.nonstandard)
+      ? simulateNN(nn, bs, la, spin) : simulatePhysQ(bs, la, spin, conditions);
+    return { ...r, club: key, tier, ballMph: bs, launchDeg: la, spinRpm: spin, nudge,
+             conditions: cond.nonstandard ? conditions : null };
   }
 
   /* ------------------------------- card UI -------------------------------- */
