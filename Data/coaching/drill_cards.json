@@ -1,0 +1,153 @@
+{
+  "_schema": {
+    "version": "0.1.0",
+    "note": "Grounded-advice corpus for the chat coach (CHAT_V2_PLAN.md §3). One card per flaggable (indicator, direction) pair from coaching_scorecard.RULES. get_drills only serves a card when its indicator is CURRENTLY flagged (severity 'review') on the swing being discussed — advice is retrieved, not generated. what_should_change is the measurable prediction the coach verifies on a later session (compare_swings/compare_sessions). direction: 'below' = value flagged under p10, 'above' = over p90. Authored from standard, widely-taught golf instruction; body-posture register per team decision 2026-08-01 (reverses the earlier interpretive-only requirement).",
+    "fields": ["indicator_key", "direction", "title", "fault", "setup", "movement", "reps", "feel_cue", "what_should_change", "caution"]
+  },
+  "cards": [
+    {
+      "indicator_key": "shoulder_turn_top_deg",
+      "direction": "below",
+      "title": "Back-to-target turns",
+      "fault": "The shoulders stop turning early, so the backswing stores less coil than a typical tour swing.",
+      "setup": "No club. Stand in your address posture with your arms crossed over your chest, hands on opposite shoulders.",
+      "movement": "Turn your lead shoulder down and under your chin until your back faces the target, hold for two seconds, then return to address.",
+      "reps": "10 slow turns before you hit balls; then rehearse the same top position with a club.",
+      "feel_cue": "Lead shoulder under your chin, shirt buttons pointing away from the target at the top.",
+      "what_should_change": { "indicator_key": "shoulder_turn_top_deg", "direction": "up" },
+      "caution": "Turn as far as your body comfortably allows — a fuller turn should come from rotation, not from bending the lead arm or lifting out of posture."
+    },
+    {
+      "indicator_key": "x_factor_top_deg",
+      "direction": "below",
+      "title": "Quiet-hips coil",
+      "fault": "Shoulders and hips turn together, so there is little separation (coil) between them at the top.",
+      "setup": "Address posture, club held across your chest with both forearms.",
+      "movement": "Turn your shoulders to the top while keeping your belt buckle facing the ball as long as is comfortable, so the shoulders out-turn the hips.",
+      "reps": "8 slow rehearsals, feeling the stretch across your torso, then 5 easy swings keeping that feel.",
+      "feel_cue": "Shoulders win the race to the top; the belt buckle lags behind.",
+      "what_should_change": { "indicator_key": "x_factor_top_deg", "direction": "up" },
+      "caution": "The stretch should feel like a gentle wind-up, never a strain in the lower back."
+    },
+    {
+      "indicator_key": "x_factor_top_deg",
+      "direction": "above",
+      "title": "Step-and-sync swings",
+      "fault": "The shoulders out-turn the hips by more than typical tour swings — extra coil that can stress the lower back.",
+      "setup": "Mid iron, ball on a tee, feet together at address.",
+      "movement": "As you swing to the top, step your lead foot toward the target and let your hips turn along with your shoulders, so body and arms arrive together.",
+      "reps": "10 smooth step-swings at half pace.",
+      "feel_cue": "Hips and shoulders wind up as one piece — no extra twist at the top.",
+      "what_should_change": { "indicator_key": "x_factor_top_deg", "direction": "down" },
+      "caution": "This one is specifically worth doing if the extra separation comes with any lower-back discomfort."
+    },
+    {
+      "indicator_key": "hip_turn_impact_deg",
+      "direction": "below",
+      "title": "Belt-buckle-to-target finish",
+      "fault": "The hips stall on the way down and stay square at impact, instead of being open like a typical tour swing.",
+      "setup": "Short iron, easy pace, ball on a tee.",
+      "movement": "Swing through and keep your lower body turning so your belt buckle faces the target at the finish; let the trail heel release off the ground.",
+      "reps": "10 swings at 70% pace, holding the finish for two seconds each time.",
+      "feel_cue": "Belt buckle beats the club to the target.",
+      "what_should_change": { "indicator_key": "hip_turn_impact_deg", "direction": "up" },
+      "caution": "Keep the turn level — opening the hips should not mean sliding them toward the target."
+    },
+    {
+      "indicator_key": "posture_loss_deg",
+      "direction": "above",
+      "title": "Wall-seat posture holds",
+      "fault": "The spine angle changes noticeably between address and impact — standing up out of posture (early extension).",
+      "setup": "Address posture with your backside lightly touching a wall or bench behind you, no ball.",
+      "movement": "Make slow swings keeping your backside in contact with the wall from address through impact; the trail glute rolls along the wall as you turn.",
+      "reps": "10 slow-motion rehearsals, then 5 half-speed swings trying to recreate the same feel.",
+      "feel_cue": "Stay seated — chest down over the ball, backside on the wall through the strike.",
+      "what_should_change": { "indicator_key": "posture_loss_deg", "direction": "down" },
+      "caution": "Keep knee flex soft and athletic; forcing the position rigid defeats the purpose."
+    },
+    {
+      "indicator_key": "head_sway_max_pct",
+      "direction": "above",
+      "title": "Doorframe head window",
+      "fault": "The head drifts sideways off the ball during the backswing more than typical tour swings.",
+      "setup": "Address posture with the trail side of your head a few centimetres from a doorframe or an alignment stick in the ground.",
+      "movement": "Make backswings turning your shoulders fully WITHOUT letting your head touch the frame — coil around a steady centre instead of sliding into it.",
+      "reps": "10 rehearsal backswings, then hit easy shots keeping the same steady-centre feel.",
+      "feel_cue": "Turn in a barrel: the head stays inside an imaginary window while the body coils.",
+      "what_should_change": { "indicator_key": "head_sway_max_pct", "direction": "down" },
+      "caution": "A small natural drift is fine — the goal is less slide, not a frozen head."
+    },
+    {
+      "indicator_key": "head_lift_max_pct",
+      "direction": "above",
+      "title": "Chin-on-the-shelf swings",
+      "fault": "The head rises or drops during the swing more than typical tour swings, changing the distance to the ball.",
+      "setup": "Address a ball with your chin feeling like it rests on an imaginary shelf at its address height.",
+      "movement": "Make smooth half swings keeping the chin on that shelf — the body turns underneath a level head — gradually building to full swings.",
+      "reps": "10 half swings, then 5 three-quarter swings, checking the feel each time.",
+      "feel_cue": "The world stays level: your eye line neither dips nor rises until after impact.",
+      "what_should_change": { "indicator_key": "head_lift_max_pct", "direction": "down" },
+      "caution": "Level head, soft knees — don't lock the legs to fake stillness."
+    },
+    {
+      "indicator_key": "left_arm_bend_top_deg",
+      "direction": "below",
+      "title": "Wide-takeaway towel stretch",
+      "fault": "The lead arm folds at the top more than typical tour swings, narrowing the swing's arc.",
+      "setup": "Hold a club normally with a small towel pinched between your lead armpit and chest.",
+      "movement": "Swing to the top keeping the towel pinned and the hands feeling as FAR from your chest as comfortable — width comes from the shoulder turn, not from reaching.",
+      "reps": "8 slow swings to the top, holding two seconds at the widest point.",
+      "feel_cue": "Push the hands away from your head at the top; the lead arm stays long, not locked.",
+      "what_should_change": { "indicator_key": "left_arm_bend_top_deg", "direction": "up" },
+      "caution": "Long, not rigid — a softly straight lead arm beats a tense one."
+    },
+    {
+      "indicator_key": "hip_lateral_shift_pct",
+      "direction": "below",
+      "title": "Bump-then-turn pump",
+      "fault": "The hips move toward the target less than typical — weight hangs back instead of shifting into the lead side.",
+      "setup": "Mid iron, address a teed ball with slightly narrowed stance.",
+      "movement": "From the top, pump the downswing start twice — a small hip bump toward the target that presses pressure into the lead heel — then on the third pump, turn through and hit the shot.",
+      "reps": "5 sets of pump-pump-swing at easy pace.",
+      "feel_cue": "Pressure into the lead heel first, THEN turn — bump before you spin.",
+      "what_should_change": { "indicator_key": "hip_lateral_shift_pct", "direction": "up" },
+      "caution": "The bump is a few centimetres, not a lunge — the head stays back while the hips shift."
+    },
+    {
+      "indicator_key": "hip_lateral_shift_pct",
+      "direction": "above",
+      "title": "Post-up on the lead leg",
+      "fault": "The hips slide toward the target more than typical tour swings — swaying past the ball instead of rotating around the lead side.",
+      "setup": "Address posture with an alignment stick (or club shaft) in the ground just outside your lead hip.",
+      "movement": "Swing through WITHOUT the lead hip bumping the stick: the hip turns back and around behind you as you straighten into the lead leg through impact.",
+      "reps": "10 easy swings, checking the stick stays untouched.",
+      "feel_cue": "Lead hip clears back and around, not out toward the target — post up tall on the lead leg.",
+      "what_should_change": { "indicator_key": "hip_lateral_shift_pct", "direction": "down" },
+      "caution": "Some shift toward the target is good — the stick polices the extra slide, not the move itself."
+    },
+    {
+      "indicator_key": "tempo_ratio",
+      "direction": "below",
+      "title": "One-two-three ... ONE counting",
+      "fault": "The backswing-to-downswing rhythm is quicker than the roughly 3-to-1 tour norm — the transition rushes.",
+      "setup": "Any club, easy shots off a tee.",
+      "movement": "Count 'one-two-three' at an even pace during the backswing, and start down only on the next 'ONE'. Let the count — not the hands — decide when the downswing starts.",
+      "reps": "10 shots counting out loud, then 5 keeping the count silently.",
+      "feel_cue": "Finish the backswing; the ball isn't going anywhere.",
+      "what_should_change": { "indicator_key": "tempo_ratio", "direction": "up" },
+      "caution": "Slower transition, same committed strike — don't decelerate through the ball."
+    },
+    {
+      "indicator_key": "tempo_ratio",
+      "direction": "above",
+      "title": "Compact-top rehearsals",
+      "fault": "The backswing runs long relative to the downswing — the ratio sits past the roughly 3-to-1 tour norm.",
+      "setup": "Mid iron, ball on a tee, mirror or phone camera face-on if available.",
+      "movement": "Rehearse stopping the backswing when the lead shoulder finishes its turn — the club quits drifting at the top — then hit shots from that slightly shorter, snugger top position.",
+      "reps": "5 rehearsals to the checkpoint, then 10 easy shots from the compact top.",
+      "feel_cue": "Turn ends, swing starts — no pause-and-drift at the top.",
+      "what_should_change": { "indicator_key": "tempo_ratio", "direction": "down" },
+      "caution": "Shorter top, full shoulder turn — compact should not shrink the body turn itself."
+    }
+  ]
+}

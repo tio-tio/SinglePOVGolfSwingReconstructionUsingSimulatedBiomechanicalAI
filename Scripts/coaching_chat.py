@@ -42,6 +42,7 @@ from session_meta import cluster_sessions
 
 KB_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_kb.json"
 CONF_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_confidence.json"
+DRILLS_PATH = PROJECT_ROOT / "Data" / "coaching" / "drill_cards.json"
 DEFAULT_MODEL = "claude-opus-4-8"
 # hard cap on tool round-trips per user turn (cost + loop guard). 8 (was 6):
 # session questions legitimately chain list_sessions -> load/compare -> details.
@@ -599,6 +600,77 @@ def _t_get_capture_quality(ctx: SwingContext, inp: dict) -> dict:
     return out
 
 
+# ---- chat v2: grounded posture coaching (advice = retrieved, not generated) #
+
+_DRILLS_CACHE: dict = {"loaded": False, "cards": []}
+
+
+def load_drills() -> list[dict]:
+    if not _DRILLS_CACHE["loaded"]:
+        _DRILLS_CACHE["loaded"] = True
+        try:
+            _DRILLS_CACHE["cards"] = json.loads(
+                DRILLS_PATH.read_text(encoding="utf-8")).get("cards", [])
+        except (OSError, json.JSONDecodeError):
+            _DRILLS_CACHE["cards"] = []
+    return _DRILLS_CACHE["cards"]
+
+
+def _t_get_drills(ctx: SwingContext, inp: dict) -> dict:
+    """Drill cards for CURRENTLY-FLAGGED, reliable indicators only. The model
+    may only prescribe what this returns — the verifier enforces it."""
+    key = (inp or {}).get("indicator_key") or None
+    flags = {f["indicator"]: f for f in ctx.a.get("feedback", [])
+             if f.get("severity") == "review"}
+    if key and key not in flags:
+        tier = ctx.confidence_tier(key) if ctx.has(key) else None
+        why = ("its measurement is low-confidence from a single camera"
+               if tier == "low" else
+               "it measured inside the typical tour range" if ctx.has(key) else
+               "it isn't measured for this swing")
+        return {"available": False, "indicator_key": key,
+                "note": f"No drill for that: {why}. Only metrics currently flagged "
+                        f"out of range get practice suggestions — say so plainly."}
+    if key:
+        targets = [flags[key]]
+    else:
+        if not flags:
+            return {"available": False,
+                    "note": "Nothing is flagged out of range on this swing, so there is "
+                            "nothing to prescribe. Tell the golfer what measured well "
+                            "instead - do not invent something to work on."}
+        # worst first: furthest percentile from the middle
+        targets = sorted(flags.values(),
+                         key=lambda f: abs(50 - (f.get("percentile") or 50)),
+                         reverse=True)[:2]
+    cards, missing = [], []
+    for f in targets:
+        direction = "below" if (f.get("percentile") or 50) <= 50 else "above"
+        matched = [c for c in load_drills()
+                   if c["indicator_key"] == f["indicator"] and c["direction"] == direction]
+        if matched:
+            for c in matched:
+                cards.append({**c, "flag_percentile": f.get("percentile"),
+                              "flag_message": f.get("message")})
+        else:
+            missing.append(f["indicator"])
+    if not cards:
+        return {"available": False, "missing_cards_for": missing,
+                "note": "Flagged, but no reviewed drill exists for that pattern yet — "
+                        "describe the observation without prescribing."}
+    return {
+        "available": True, "drills": cards,
+        "for_indicators": [c["indicator_key"] for c in cards],
+        **({"missing_cards_for": missing} if missing else {}),
+        "how_to_phrase": (
+            "Relay ONLY these drills, by their title, tied to the flagged measurement "
+            "they address (one drill is usually plenty - lead with the worst flag). "
+            "Keep the golfer's numbers from get_indicator alongside. Mention "
+            "what_should_change so progress is checkable next session. Never add "
+            "drills, fixes, or technical positions beyond these cards."),
+    }
+
+
 # (name -> (json-schema, fn)). Schemas are the model-facing tool contract.
 TOOLS: dict[str, tuple[dict, ToolFn]] = {
     "list_indicators": ({
@@ -725,6 +797,19 @@ TOOLS: dict[str, tuple[dict, ToolFn]] = {
                                         "session_id_b": {"type": "string"}},
                          "required": ["session_id_a", "session_id_b"], "additionalProperties": False},
     }, _t_compare_sessions),
+    "get_drills": ({
+        "description": "Practice drills for what's ACTUALLY flagged on this swing. Call when "
+                       "the golfer asks how to improve, what to work on, or how to fix "
+                       "something. Returns reviewed drill cards ONLY for metrics currently "
+                       "measured out of the tour range (reliable ones) — if it returns none, "
+                       "there is nothing to prescribe and you must not invent advice. Omit "
+                       "indicator_key to get drills for the worst flags.",
+        "input_schema": {"type": "object",
+                         "properties": {"indicator_key": {"type": "string",
+                                                          "description": "optional: drills for one "
+                                                                         "specific flagged metric"}},
+                         "additionalProperties": False},
+    }, _t_get_drills),
     "get_conditions": ({
         "description": "Recorded context for a swing: session note, club, range/course, and "
                        "any weather captured at upload time. Call before answering questions "
@@ -862,14 +947,26 @@ CONTEXT & FOLLOW-UP QUESTIONS (only when the context tools are available):
     should I film?") -> `get_capture_quality`. Its guidance is about the VIDEO — sharing it
     is fine and is not swing coaching.
 
+COACHING ADVICE (how to improve, what to work on, fixes, drills):
+  - Call `get_drills`. It returns reviewed practice drills ONLY for metrics currently measured
+    outside the tour range on THIS swing. Relay a returned drill by its title with its setup /
+    movement / feel cue, tied to the measurement it addresses (fetch that number with
+    `get_indicator` so the golfer sees why). One drill is usually plenty — lead with the worst flag.
+  - If `get_drills` returns nothing, say so honestly: nothing measured out of range, so there's
+    nothing to prescribe — and point at what measured well instead. NEVER invent a drill, a fix,
+    a body position, or advice beyond what the tool returned.
+  - Mention what should change ("this drill is about bringing your hip slide down into the tour
+    range") — next session's comparison can then check whether it worked. When an earlier session
+    prescribed something (see its notes), check that metric first and say what happened.
+  - Advice is about posture and body positions we actually measure. Anything else (grip, club
+    path, equipment, strategy) stays out of scope — refuse those plainly.
+
 When to REFUSE (do not guess):
   - UNMEASURED: the question is about something not in `list_indicators` and not simulable
     (grip, which direction the ball started, club face/path, swing plane, wrist hinge,
     clubhead speed, club choice, ...). Say plainly you can't tell from what was measured.
   - LOW CONFIDENCE: `get_indicator` returns reliable=false (e.g. arm bend from one camera). Do not
     reveal or judge that value; say it isn't reliable enough to assess.
-  - FIX / ADVICE: the golfer asks what to change, fix, drill, or practice. Say you can describe the
-    swing but not prescribe fixes.
 
 Style: warm, plain, short. 1-3 sentences for most answers. Invent nothing. Use only glossary wording
 for golf terms."""
@@ -1151,6 +1248,10 @@ class Conversation:
 
 import re
 
+# Prescriptive language is legal in chat ONLY when it relays a drill card that
+# get_drills returned this turn (team decision 2026-08-01, CHAT_V2_PLAN.md §3 —
+# reverses the earlier blanket ban; advice is retrieved, never generated). The
+# blanket ban still holds on the one-shot surfaces (scorecard/explanation).
 PRESCRIPTIVE = [r"\byou should\b", r"\btry to\b", r"\bwork on\b", r"\bfocus on\b",
                 r"\bmake sure\b", r"\bto fix\b", r"\bpractice\b", r"\bdrill\b",
                 r"\byou need to\b", r"\baim to\b"]
@@ -1241,6 +1342,7 @@ def verify_chat_grounding(ctx: SwingContext, result: TurnResult) -> dict:
     fetched_lowconf: set[str] = set()
     lowconf_values: dict[str, float] = {}
     grounded_nums: set[float] = set()
+    drill_titles: list[str] = []   # titles get_drills returned THIS turn
     sim_ok = False   # a successful flight simulation legitimizes range phrasing
                      # ("above tour-typical") that narrates the tool's own notes
     for entry in result.tool_log:
@@ -1255,6 +1357,16 @@ def verify_chat_grounding(ctx: SwingContext, result: TurnResult) -> dict:
             for f in r.get("flagged", []):
                 if f.get("key"):
                     fetched_ok.add(f["key"])
+        if entry["name"] == "get_drills":
+            # any get_drills result IS a band verdict: available=True asserts the
+            # flag, available=False asserts nothing (or that metric) is out of
+            # range — so range phrasing narrating it is grounded either way
+            sim_ok = True
+            for card in r.get("drills", []):
+                if card.get("title"):
+                    drill_titles.append(_norm(card["title"]).lower())
+                if card.get("indicator_key"):
+                    fetched_ok.add(card["indicator_key"])   # card carries the flag verdict
         if entry["name"] in ("compare_swings", "compare_sessions") and r.get("compared"):
             # each comparable row carries a tool-asserted band-relative verdict,
             # so range/progress phrasing about those metrics is grounded
@@ -1308,8 +1420,13 @@ def verify_chat_grounding(ctx: SwingContext, result: TurnResult) -> dict:
     if any(p in answer_l for p in _RANGE_WORDS) and not fetched_ok and not sim_ok:
         violations.append({"type": "ungrounded_range_claim"})
 
+    # prescriptive language must trace to a drill card fetched THIS turn: the
+    # answer has to name one of the returned drills. Otherwise it's invented
+    # advice — the exact failure mode the retrieved-not-generated design blocks.
     if not is_refusal and any(re.search(p, answer_l) for p in PRESCRIPTIVE):
-        violations.append({"type": "prescriptive"})
+        relayed = any(t and t in answer_l for t in drill_titles)
+        if not relayed:
+            violations.append({"type": "ungrounded_prescription"})
 
     return {"grounded": len(violations) == 0, "violations": violations,
             "fetched_reliable": sorted(fetched_ok), "fetched_low_conf": sorted(fetched_lowconf)}

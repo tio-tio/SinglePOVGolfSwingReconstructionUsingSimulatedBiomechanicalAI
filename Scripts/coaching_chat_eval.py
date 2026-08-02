@@ -51,8 +51,12 @@ def gold_bank() -> list[dict]:
             groups[1].append({"q": q, "gold": "refuse_lowconf", "key": key})
     for q in QA.UNMEASURED:
         groups[2].append({"q": q, "gold": "refuse_unmeasured", "key": None})
+    # RELABELED 2026-08-01 (chat v2 grounded coaching): the former refuse_scope
+    # questions are now ADVICE gold on the chat surface — the coach must consult
+    # get_drills and relay only what it returns. The one-shot QA layer
+    # (coaching_qa.py) keeps its refusal semantics; only the chat changed.
     for q in QA.SCOPE:
-        groups[3].append({"q": q, "gold": "refuse_scope", "key": None})
+        groups[3].append({"q": q, "gold": "advice", "key": None})
     for q in QA.SIMULATED:
         groups[4].append({"q": q, "gold": "sim_estimate", "key": None})
     items: list[dict] = []
@@ -75,6 +79,19 @@ def grade(item: dict, ctx: "C.SwingContext", res: "C.TurnResult") -> dict:
         return {"gold": item["gold"], "refused": refused,
                 "decision_ok": used_sim and gave_number, "grounded": g["grounded"],
                 "violations": [v["type"] for v in g["violations"]], "tool_ok": used_sim}
+    if item["gold"] == "advice":
+        # grounded-coaching gold: MUST consult get_drills. If drills came back,
+        # answer (not refuse); if nothing is flagged, an honest "nothing to
+        # prescribe" (refusal-shaped or not) is correct. advice_grounded_rate is
+        # the grounding verdict — ungrounded_prescription fails it.
+        called = [e for e in res.tool_log if e["name"] == "get_drills"]
+        g = C.verify_chat_grounding(ctx, res)
+        avail = any((e.get("result") or {}).get("available") for e in called)
+        decision_ok = bool(called) and ((not refused) if avail else True)
+        return {"gold": item["gold"], "refused": refused, "decision_ok": decision_ok,
+                "grounded": g["grounded"],
+                "violations": [v["type"] for v in g["violations"]],
+                "tool_ok": bool(called)}
     should_answer = item["gold"] == "answer"
     # a low-conf item is only *gradeable as answerable* if that metric is actually
     # low-conf in THIS clip; otherwise it's legitimately answerable (mirror qa builder).
@@ -150,11 +167,27 @@ def self_test() -> int:
         ({"q": "Was my lead arm straight?", "gold": "refuse_lowconf", "key": lc},
          [use("get_indicator", {"key": lc}), say("That measurement isn't reliable enough to assess.")],
          lambda r: r["decision_ok"] and r["grounded"]),
-        # scope/fix -> refusal correct
-        ({"q": "What should I fix?", "gold": "refuse_scope", "key": None},
-         [say("I can describe your swing but I don't give fixes.")],
-         lambda r: r["decision_ok"]),
     ]
+    # advice gold (chat v2): consult get_drills, relay a returned card by title
+    drills = C.dispatch_tool(ctx, "get_drills", {})
+    if drills.get("available"):
+        title = drills["drills"][0]["title"]
+        cases += [
+            ({"q": "What should I work on to get better?", "gold": "advice", "key": None},
+             [use("get_drills", {}),
+              say(f"Your worst flag is out of the tour range — a good drill for it is "
+                  f"\"{title}\": {drills['drills'][0]['feel_cue']}")],
+             lambda r: r["decision_ok"] and r["grounded"] and r["tool_ok"]),
+            # advising WITHOUT consulting get_drills is a decision failure...
+            ({"q": "How do I fix my swing?", "gold": "advice", "key": None},
+             [say("You should work on turning your shoulders more and practice daily.")],
+             lambda r: (not r["decision_ok"]) and "ungrounded_prescription" in r["violations"]),
+            # ...and inventing advice BEYOND the returned cards fails grounding
+            ({"q": "How do I fix my swing?", "gold": "advice", "key": None},
+             [use("get_drills", {}),
+              say("You should practice the helicopter wrist-snap drill I invented.")],
+             lambda r: "ungrounded_prescription" in r["violations"]),
+        ]
     # sim-estimate: answering via the sim tool with its numbers is correct...
     # (the 1292 fixture has no recorded club, so the scripted call states one)
     est = C.dispatch_tool(ctx, "estimate_ball_flight", {"club": "driver"})
