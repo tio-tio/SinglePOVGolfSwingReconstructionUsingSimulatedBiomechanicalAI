@@ -1,5 +1,24 @@
 # Chat V2 Plan — session-aware coach, richer context, grounded posture coaching
 
+> **STATUS 2026-08-01: IMPLEMENTED in code (6 commits on `aws-deploy-handoff`,
+> 45ecb05..e5bbe63), all offline suites green (369 checks). NOT yet deployed.**
+> Deploy checklist to go live:
+> 1. Re-zip + update the **upload** and **jobs** Lambdas (each zip now bundles
+>    `Scripts/session_meta.py` flat — see the READMEs' zip commands).
+> 2. Grant the jobs role `s3:PutObject` on `03_outputs/*` and add the
+>    **`POST /jobs`** route on API Gateway (PENDING_PERMISSIONS.md).
+> 3. Rebuild + deploy the **chat image** (Dockerfile gained session/progress
+>    modules + drill_cards.json) with new env: `JOBS_API_BASE` (same API origin),
+>    `CHAT_LLM_TIMEOUT=18`, `CHAT_LLM_RETRIES=1`.
+> 4. Rebuild + deploy the **processing image** (job_meta artifact + Open-Meteo
+>    backfill; Scripts/ zipped recursively per the image-build memory).
+> 5. Publish the web bundle (chat.js / portal.js / ballflight.js).
+> 6. Smoke live: upload two swings ≥5 min apart → "compare this to my last
+>    session", "what should I work on", "was it windy?" against real jobs.
+> Not built (by design): md→json drill-card compiler (corpus is authored
+> directly in drill_cards.json v0.1.0), conditions row on the ball-flight card
+> (the coach covers conditions), P4 items (spoken recap, Aurora goals).
+
 Scoping doc v2, 2026-08-01. v1 research summary retained in §0; §1–§6 updated with
 Banjot's decisions:
 
