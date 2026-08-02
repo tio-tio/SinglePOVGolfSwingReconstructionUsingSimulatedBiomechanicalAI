@@ -257,6 +257,24 @@ const BallFlight = (() => {
       </div>`;
   }
 
+  /* Tracking ran but this swing's flight could not be confirmed. Say so: the
+   * golfer otherwise just finds their own ball flight missing, with nothing but
+   * the Amateur/PGA/LPGA tiers on screen and no idea whether the feature is
+   * broken or their video is. */
+  function unmeasuredHTML(ball) {
+    const n = ball.n_track_points || 0;
+    const why = n >= 5
+      ? `We followed a ball for ${n} frames of this swing, but the path did not
+         hold together as a flight well enough to measure — so the arc below is
+         a simulation, not your shot.`
+      : `We could not pick your ball out of this video, so the arc below is a
+         simulation, not your shot.`;
+    return `
+      <p class="muted small" id="bf-unmeasured" style="margin:4px 0 8px">${why}
+        Ball tracking wants the ball against open sky: film down the line, keep
+        the landing area in frame, and avoid shooting into glare.</p>`;
+  }
+
   /* opts: { aside: ".results-media", club, tier, metricsRows, sourceLabel,
    *         ball: parsed ball_3d.json | null } */
   function mount(opts) {
@@ -275,9 +293,11 @@ const BallFlight = (() => {
     const badge = ball
       ? (ball.quality === "measured" ? "— measured from your video" : "— measured launch")
       : "— simulated";
+    const tracked = !ball && opts.ball && opts.ball.quality === "simulated";
     card.innerHTML = `
       <h3>Ball flight <span class="muted small">${badge}</span></h3>
       ${ball ? measuredHTML(ball) : ""}
+      ${tracked ? unmeasuredHTML(opts.ball) : ""}
       ${ball ? `<p class="muted small" style="margin:8px 0 2px;border-top:1px solid rgba(127,127,127,.25);padding-top:6px">What-if simulator</p>` : ""}
       <div class="bf-controls" style="display:flex;gap:8px;margin:6px 0 8px;flex-wrap:wrap">
         <label class="small muted">Club <select id="bf-club">${clubOpts}</select></label>
