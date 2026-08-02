@@ -37,11 +37,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 import coaching_llm_summary_v2 as v2  # KB loader + KB block builder (no clip numbers)
 from coaching_persona import DEFAULT_PERSONA, load_persona #Loads the narration persona
 import ball_flight as BF  # physics ball-flight sim (McNally CVPR'23W baseline)
+import coaching_sessions as CS  # session rollups + delta_truth reshaping (chat v2)
+from session_meta import cluster_sessions
 
 KB_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_kb.json"
 CONF_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_confidence.json"
 DEFAULT_MODEL = "claude-opus-4-8"
-MAX_TOOL_ITERS = 6  # hard cap on tool round-trips per user turn (cost + loop guard)
+# hard cap on tool round-trips per user turn (cost + loop guard). 8 (was 6):
+# session questions legitimately chain list_sessions -> load/compare -> details.
+MAX_TOOL_ITERS = int(os.environ.get("CHAT_MAX_TOOL_ITERS", "8"))
+# artifact fetches one turn may trigger (library browsing) — bounds wall clock
+# inside the API Gateway 29 s window even on a cold /tmp cache
+FETCH_BUDGET = 12
 
 # --------------------------------------------------------------------------- #
 # SwingContext — the ONLY thing tools can read (grounding boundary)
@@ -69,10 +76,16 @@ class SwingContext:
     conf: dict = field(default_factory=_load_confidence)
     a_label: str = "this swing"
     b_label: str = "the earlier swing"
+    # --- chat v2 library browsing (uploaded jobs only; None on demo clips) ---
+    library: list[dict] | None = None   # /jobs listing (+ inlined job_meta fields)
+    current_id: str | None = None       # the active swing's job id in `library`
+    fetcher: Any = None                 # fn(job_id) -> {"scorecard","ball","meta"}|None
+    loaded: dict = field(default_factory=dict)   # job_id -> scorecard (via load_swing)
+    fetches: int = 0                    # per-request artifact-fetch budget used
 
     @classmethod
     def from_files(cls, a_path: str | Path, b_path: str | Path | None = None,
-                   ball_path: str | Path | None = None) -> "SwingContext":
+                   ball_path: str | Path | None = None, **kw) -> "SwingContext":
         a = json.loads(Path(a_path).read_text(encoding="utf-8"))
         b = json.loads(Path(b_path).read_text(encoding="utf-8")) if b_path else None
         ball = None
@@ -81,29 +94,58 @@ class SwingContext:
                 ball = json.loads(Path(ball_path).read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 ball = None
-        return cls(a=a, kb=v2.load_kb(), b=b, ball=ball)
+        return cls(a=a, kb=v2.load_kb(), b=b, ball=ball, **kw)
+
+    # -- scorecard resolution -------------------------------------------------
+    def _sc(self, which: str = "a") -> dict | None:
+        """'a' / 'b' / a job id (current or previously load_swing-ed)."""
+        if which == "a" or which == self.current_id:
+            return self.a
+        if which == "b":
+            return self.b
+        return self.loaded.get(which)
+
+    def fetch_swing(self, swing_id: str) -> dict | None:
+        """Scorecard for a library swing, via the injected fetcher (cached).
+        Returns None when unknown/unfetchable/over budget."""
+        if swing_id == self.current_id:
+            return self.a
+        if swing_id in self.loaded:
+            return self.loaded[swing_id]
+        if self.fetcher is None or self.fetches >= FETCH_BUDGET:
+            return None
+        self.fetches += 1
+        bundle = self.fetcher(swing_id) or {}
+        sc = bundle.get("scorecard")
+        if sc:
+            self.loaded[swing_id] = sc
+        return sc
+
+    def library_entry(self, swing_id: str) -> dict | None:
+        for j in self.library or []:
+            if j.get("job_id") == swing_id:
+                return j
+        return None
 
     # -- per-indicator helpers ------------------------------------------------
     def has(self, key: str, which: str = "a") -> bool:
-        sc = self.b if which == "b" else self.a
+        sc = self._sc(which)
         return bool(sc) and key in sc.get("indicators", {})
 
     def confidence_tier(self, key: str, which: str = "a") -> str:
-        sc = self.b if which == "b" else self.a
-        ind = (sc or {}).get("indicators", {}).get(key, {})
+        ind = (self._sc(which) or {}).get("indicators", {}).get(key, {})
         if ind.get("confidence_tier"):
             return ind["confidence_tier"]
         return self.conf.get(key, {}).get("tier", "med")
 
     def in_range(self, key: str, which: str = "a") -> bool:
-        sc = self.b if which == "b" else self.a
-        v = sc["indicators"][key]
+        v = self._sc(which)["indicators"][key]
         lo, hi = v["pro_band"]
         return lo <= v["value"] <= hi
 
     def indicator_view(self, key: str, which: str = "a") -> dict:
         """Structured, grounded read of one indicator + its KB card."""
-        sc = self.b if which == "b" else self.a
+        sc = self._sc(which)
         v = sc["indicators"][key]
         card = self.kb.get("indicators", {}).get(key, {})
         tier = self.confidence_tier(key, which)
@@ -148,12 +190,27 @@ def _t_list_indicators(ctx: SwingContext, _inp: dict) -> dict:
 
 def _t_get_indicator(ctx: SwingContext, inp: dict) -> dict:
     key = (inp or {}).get("key", "")
-    if not ctx.has(key):
+    which = "a"
+    swing_id = (inp or {}).get("swing_id")
+    if swing_id and swing_id != ctx.current_id:
+        if ctx.fetch_swing(swing_id) is None:
+            return {"measured": False, "key": key, "swing_id": swing_id,
+                    "note": "That swing isn't loaded — call load_swing first (or check "
+                            "list_sessions for valid swing ids)."}
+        which = swing_id
+    if not ctx.has(key, which):
         return {"measured": False, "key": key,
                 "note": "This metric is not measured for this swing. Do not guess a value."}
-    view = ctx.indicator_view(key)
+    view = ctx.indicator_view(key, which)
     view["measured"] = True
-    if not view["reliable"]:
+    if which != "a":
+        view["swing_id"] = swing_id
+    _mark_low_conf(view)
+    return view
+
+
+def _mark_low_conf(view: dict) -> dict:
+    if not view.get("reliable"):
         view["note"] = ("This metric is LOW CONFIDENCE from a single camera. Do not state its "
                         "value or judge it; tell the golfer it isn't reliable enough to assess.")
     return view
@@ -316,6 +373,112 @@ def _t_get_ball_flight(ctx: SwingContext, inp: dict) -> dict:
     return res
 
 
+# ---- chat v2: library / session tools (uploaded jobs only) ---------------- #
+
+def _t_list_sessions(ctx: SwingContext, _inp: dict) -> dict:
+    """The golfer's practice sessions, newest first, from the job listing."""
+    if not ctx.library:
+        return {"available": False,
+                "note": "No swing library is available in this chat (demo clips are "
+                        "single-swing). Only the current swing can be discussed."}
+    sessions = CS.session_view(cluster_sessions(ctx.library), ctx.current_id)
+    return {"available": True, "sessions": sessions, "n_sessions": len(sessions),
+            "note": "Sessions are practice visits (uploads within ~2 hours cluster "
+                    "together). The library is the team's shared pilot library, so a "
+                    "session may contain a teammate's swings."}
+
+
+def _t_load_swing(ctx: SwingContext, inp: dict) -> dict:
+    swing_id = str((inp or {}).get("swing_id") or "")
+    sc = ctx.fetch_swing(swing_id)
+    if sc is None:
+        return {"loaded": False, "swing_id": swing_id,
+                "note": "Couldn't load that swing (unknown id, still processing, or "
+                        "this turn's load budget is used up). Check list_sessions."}
+    inds = sc.get("indicators", {})
+    reliable = [k for k in inds if (inds[k].get("confidence_tier") or "med") != "low"]
+    flagged = [f["indicator"] for f in sc.get("feedback", []) if f.get("severity") == "review"]
+    entry = ctx.library_entry(swing_id) or {}
+    return {"loaded": True, "swing_id": swing_id,
+            "name": entry.get("name"), "date": entry.get("date"),
+            **{k: entry[k] for k in ("club", "setting", "notes", "session_id") if entry.get(k)},
+            "n_indicators": len(inds), "n_reliable": len(reliable),
+            "n_flagged": len(flagged), "flagged_keys": flagged,
+            "note": "Loaded. get_indicator now accepts this swing_id; compare_swings "
+                    "can compare it against the current swing or another loaded one."}
+
+
+def _cmp_pair_scorecards(ctx: SwingContext, id_a: str, id_b: str):
+    """Resolve two swing ids -> (earlier_meta, later_meta, scA, scB) or an error dict."""
+    if not id_a or not id_b or id_a == id_b:
+        return {"compared": False, "note": "Give two different swing_ids (see list_sessions)."}
+    metas = []
+    for sid in (id_a, id_b):
+        if ctx.fetch_swing(sid) is None:
+            return {"compared": False, "swing_id": sid,
+                    "note": "Couldn't load that swing — check list_sessions for valid ids."}
+        e = ctx.library_entry(sid) or {}
+        metas.append({"swing_id": sid, "name": e.get("name"), "date": e.get("date")})
+    early, late, dated = CS.order_pair(*metas)
+    return early, late, dated
+
+
+def _t_compare_swings(ctx: SwingContext, inp: dict) -> dict:
+    inp = inp or {}
+    got = _cmp_pair_scorecards(ctx, str(inp.get("swing_id_a") or ""),
+                               str(inp.get("swing_id_b") or ""))
+    if isinstance(got, dict):
+        return got
+    early, late, dated = got
+    res = CS.compare_scorecards(ctx._sc(early["swing_id"]), ctx._sc(late["swing_id"]))
+    res["earlier_swing"] = early
+    res["later_swing"] = late
+    if not dated:
+        res["order_note"] = ("The swings' dates were missing or identical, so 'earlier' "
+                            "is just the first id given — say so if order matters.")
+    return res
+
+
+def _t_compare_sessions(ctx: SwingContext, inp: dict) -> dict:
+    inp = inp or {}
+    ids = (str(inp.get("session_id_a") or ""), str(inp.get("session_id_b") or ""))
+    if not ctx.library:
+        return {"compared": False, "note": "No swing library available in this chat."}
+    if not ids[0] or not ids[1] or ids[0] == ids[1]:
+        return {"compared": False,
+                "note": "Give two different session_ids from list_sessions."}
+    sessions = {s["session_id"]: s for s in cluster_sessions(ctx.library)}
+    sides = []
+    for sid in ids:
+        s = sessions.get(sid)
+        if s is None:
+            return {"compared": False, "session_id": sid,
+                    "note": "Unknown session_id — call list_sessions for the current ids."}
+        cards = []
+        for sw in s["swings"][:CS.MAX_ROLLUP_SWINGS]:
+            sc = ctx.fetch_swing(str(sw.get("job_id")))
+            if sc:
+                cards.append(sc)
+        if not cards:
+            return {"compared": False, "session_id": sid,
+                    "note": "None of that session's swings could be loaded."}
+        sides.append({"session_id": sid, "label": s.get("label"), "date": s.get("date"),
+                      "n_swings": s["n_swings"], "n_sampled": len(cards),
+                      "rollup": CS.session_rollup(cards)})
+    early, late, dated = CS.order_pair(*sides)
+    res = CS.compare_scorecards(early["rollup"], late["rollup"])
+    res["earlier_session"] = {k: early[k] for k in ("session_id", "label", "date", "n_swings", "n_sampled")}
+    res["later_session"] = {k: late[k] for k in ("session_id", "label", "date", "n_swings", "n_sampled")}
+    res["how_to_phrase"] += (
+        " Values are per-indicator MEDIANS across each session's sampled swings "
+        "(n_sampled, newest first) - phrase as 'your session medians', not as one "
+        "swing's numbers. Ball flight is NOT aggregated; distance questions need "
+        "load_swing + get_ball_flight on a specific swing.")
+    if not dated:
+        res["order_note"] = "Session dates were missing/identical; order is as given."
+    return res
+
+
 # (name -> (json-schema, fn)). Schemas are the model-facing tool contract.
 TOOLS: dict[str, tuple[dict, ToolFn]] = {
     "list_indicators": ({
@@ -330,7 +493,11 @@ TOOLS: dict[str, tuple[dict, ToolFn]] = {
                        "This is your only source of a metric's number — never state a value you "
                        "did not get from here.",
         "input_schema": {"type": "object",
-                         "properties": {"key": {"type": "string", "description": "indicator key, e.g. tempo_ratio"}},
+                         "properties": {"key": {"type": "string", "description": "indicator key, e.g. tempo_ratio"},
+                                        "swing_id": {"type": "string",
+                                                     "description": "optional: read the metric from a "
+                                                                    "load_swing-ed library swing instead "
+                                                                    "of the current one"}},
                          "required": ["key"], "additionalProperties": False},
     }, _t_get_indicator),
     "get_flagged_observations": ({
@@ -392,14 +559,55 @@ TOOLS: dict[str, tuple[dict, ToolFn]] = {
                              "description": "golfer-stated override; >0 fade, <0 draw"},
         }, "additionalProperties": False},
     }, _t_estimate_ball_flight),
+    "list_sessions": ({
+        "description": "List the golfer's practice SESSIONS (uploads grouped into visits, "
+                       "newest first) with each session's swings, dates, and any notes. Call "
+                       "this FIRST for any question about past swings, other days, progress "
+                       "over time, or 'my session on Tuesday'. Resolve the golfer's wording "
+                       "(dates, 'last time', a label) against these sessions yourself; ask ONE "
+                       "short clarifying question only if it stays ambiguous.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    }, _t_list_sessions),
+    "load_swing": ({
+        "description": "Load one library swing (by swing_id from list_sessions) so its metrics "
+                       "can be read and compared. Returns its summary (flags, club, notes, date).",
+        "input_schema": {"type": "object",
+                         "properties": {"swing_id": {"type": "string"}},
+                         "required": ["swing_id"], "additionalProperties": False},
+    }, _t_load_swing),
+    "compare_swings": ({
+        "description": "Compare TWO library swings metric-by-metric (any two swing_ids from "
+                       "list_sessions; the current swing's id works too). Orders them by date "
+                       "itself and returns per-indicator change relative to the tour band "
+                       "(improved = moved toward it) — narrate change_vs_tour, never re-derive.",
+        "input_schema": {"type": "object",
+                         "properties": {"swing_id_a": {"type": "string"},
+                                        "swing_id_b": {"type": "string"}},
+                         "required": ["swing_id_a", "swing_id_b"], "additionalProperties": False},
+    }, _t_compare_swings),
+    "compare_sessions": ({
+        "description": "Compare TWO whole practice sessions (session_ids from list_sessions). "
+                       "Each side is the per-indicator MEDIAN across that session's swings; "
+                       "change is relative to the tour band, already computed. Use for 'was "
+                       "Tuesday better than Thursday', 'am I improving', session recaps.",
+        "input_schema": {"type": "object",
+                         "properties": {"session_id_a": {"type": "string"},
+                                        "session_id_b": {"type": "string"}},
+                         "required": ["session_id_a", "session_id_b"], "additionalProperties": False},
+    }, _t_compare_sessions),
 }
 
+_LIBRARY_TOOLS = ("list_sessions", "load_swing", "compare_swings", "compare_sessions")
 
-def tool_specs(with_compare: bool) -> list[dict]:
-    """Anthropic-format tool list. `compare_indicator` only offered when a 2nd clip is loaded."""
+
+def tool_specs(with_compare: bool, with_library: bool = False) -> list[dict]:
+    """Anthropic-format tool list. `compare_indicator` only offered when a 2nd clip is
+    loaded; the session/library tools only when a job library is available."""
     names = list(TOOLS)
     if not with_compare:
         names.remove("compare_indicator")
+    if not with_library:
+        names = [n for n in names if n not in _LIBRARY_TOOLS]
     return [{"name": n, **TOOLS[n][0]} for n in names]
 
 
@@ -456,6 +664,21 @@ BALL FLIGHT (how far / where did it go, carry, height, trajectory):
                      ALWAYS disclose that it is a simulated estimate, not a measurement.
   - `estimate_ball_flight` is only for what-if questions (a different club, golfer-stated
     launch numbers). Quote numbers exactly as returned; follow each result's how_to_phrase.
+
+SESSIONS & PAST SWINGS (only when the session tools are available):
+  - Questions about other days, past swings, progress, or "last session": call `list_sessions`
+    FIRST and resolve the golfer's wording (a date, "Tuesday", "last time", a label) against it
+    yourself. If two sessions could match, ask ONE short clarifying question.
+  - "Was <day A> better than <day B>?" / "am I improving?" -> `compare_sessions`. One swing vs
+    another -> `compare_swings`. A specific metric on a specific past swing -> `load_swing`, then
+    `get_indicator` with that swing_id.
+  - The comparison tools already computed improved/regressed relative to the tour band — narrate
+    `change_vs_tour`, never re-derive a verdict from raw deltas, and never call something an
+    improvement the tool didn't. Session values are medians across sampled swings; say so when
+    quoting them.
+  - The library is the team's shared pilot library — if a swing's name suggests it isn't this
+    golfer's, note that rather than presenting it as theirs. Distances stay per-swing (load the
+    swing and use its ball flight); never average carries across swings.
 
 When to REFUSE (do not guess):
   - UNMEASURED: the question is about something not in `list_indicators` and not simulable
@@ -520,8 +743,16 @@ class AnthropicBackend(Backend):
     raising truncation risk. If thinking is enabled we DO preserve the blocks."""
 
     def __init__(self, model: str = DEFAULT_MODEL, max_tokens: int = 2048,
-                 timeout: float = 40, max_retries: int = 2, thinking: bool = False):
+                 timeout: float | None = None, max_retries: int | None = None,
+                 thinking: bool = False):
         import anthropic
+        # env-tunable: the deployed Lambda sits behind API Gateway's hard 29 s
+        # window, so prod sets CHAT_LLM_TIMEOUT=18 / CHAT_LLM_RETRIES=1 there
+        # (the CLI/local default stays the roomier 40 s x 2).
+        if timeout is None:
+            timeout = float(os.environ.get("CHAT_LLM_TIMEOUT", "40"))
+        if max_retries is None:
+            max_retries = int(os.environ.get("CHAT_LLM_RETRIES", "2"))
         self.max_tokens = max_tokens
         self.thinking = thinking
         provider = os.environ.get("CHAT_BACKEND_PROVIDER", "anthropic").lower()
@@ -693,7 +924,8 @@ class Conversation:
         self.backend = backend
         self.max_tool_iters = max_tool_iters
         self.system = build_system(ctx)
-        self.tools = tool_specs(with_compare=ctx.b is not None)
+        self.tools = tool_specs(with_compare=ctx.b is not None,
+                                with_library=ctx.library is not None)
         self.messages: list[dict] = []
 
     def ask(self, question: str) -> TurnResult:
@@ -755,13 +987,24 @@ _REFUSAL_CUE = re.compile(
 _SMALL_INT_CUTOFF = 13
 
 
+# dates in tool results are STRINGS ("2026-07-30T09:15:00", "2026-07-30"), but a
+# model narrating them says "your July 30 session" — pool their components so
+# date-talk never reads as an invented measurement.
+_DATE_STR = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?")
+
+
 def _numbers_in(obj) -> list[float]:
-    """Recursively collect every numeric leaf in a tool-result object."""
+    """Recursively collect every numeric leaf in a tool-result object, plus the
+    components (year/month/day/hour/minute) of any ISO date inside strings."""
     out: list[float] = []
     if isinstance(obj, bool):
         return out
     if isinstance(obj, (int, float)):
         return [float(obj)]
+    if isinstance(obj, str):
+        for m in _DATE_STR.finditer(obj):
+            out += [float(g) for g in m.groups() if g is not None]
+        return out
     if isinstance(obj, dict):
         for v in obj.values():
             out += _numbers_in(v)
@@ -830,6 +1073,15 @@ def verify_chat_grounding(ctx: SwingContext, result: TurnResult) -> dict:
             for f in r.get("flagged", []):
                 if f.get("key"):
                     fetched_ok.add(f["key"])
+        if entry["name"] in ("compare_swings", "compare_sessions") and r.get("compared"):
+            # each comparable row carries a tool-asserted band-relative verdict,
+            # so range/progress phrasing about those metrics is grounded
+            for row in r.get("indicators", []):
+                if row.get("comparable") and row.get("key"):
+                    fetched_ok.add(row["key"])
+        if entry["name"] == "load_swing" and r.get("loaded"):
+            for k in r.get("flagged_keys", []):
+                fetched_ok.add(k)
         if entry["name"] in ("get_indicator", "compare_indicator"):
             key = r.get("key", "")
             if r.get("reliable") is False or r.get("confidence_tier") == "low":

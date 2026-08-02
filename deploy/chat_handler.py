@@ -44,6 +44,10 @@ SCORECARD_DIR = ROOT / "Data" / "demo"
 # about an uploaded swing (see _access_ok). Demo clips stay public.
 JOB_SCORECARD_BASE = os.environ.get("JOB_SCORECARD_BASE", "").rstrip("/")
 MC_RESULTS_TOKEN = os.environ.get("MC_RESULTS_TOKEN", "")
+# chat v2 sessions: the /jobs endpoint (same API) is the library source — this
+# Lambda has no S3 access by design, so it lists over HTTPS like everything else
+JOBS_API_BASE = os.environ.get("JOBS_API_BASE", "").rstrip("/")
+JOBS_CACHE_TTL_S = int(os.environ.get("JOBS_CACHE_TTL_S", "60"))
 _JOB_ID = __import__("re").compile(r"^[0-9a-f]{32}$")
 
 
@@ -103,6 +107,82 @@ def job_ball_path(job_id: str):
         return None
 
 
+def job_meta_path(job_id: str):
+    """Fetch + cache a job's job_meta.json (session/context, chat v2). Absent
+    for pre-v2 jobs — None is normal."""
+    return _fetch_job_file(job_id, "job_meta.json", "meta")
+
+
+def _fetch_job_file(job_id: str, filename: str, tag: str):
+    import urllib.parse
+    import urllib.request
+    cache = Path("/tmp") / f"job_{tag}_{job_id}.json"
+    if cache.exists():
+        return cache
+    url = f"{JOB_SCORECARD_BASE}/{job_id}/{filename}"
+    if MC_RESULTS_TOKEN:
+        url += "?t=" + urllib.parse.quote(MC_RESULTS_TOKEN)
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            raw = r.read()
+        json.loads(raw)                      # reject the index.html rewrite
+        cache.write_bytes(raw)
+        return cache
+    except Exception as e:
+        print(f"[chat] job {filename} fetch skipped for {job_id}: {e}")
+        return None
+
+
+def jobs_library() -> list[dict] | None:
+    """The team's job listing (ready jobs only) via GET /jobs, /tmp-cached for
+    JOBS_CACHE_TTL_S. None (not []) when the endpoint isn't configured/reachable
+    so the chat cleanly runs without session tools."""
+    if not JOBS_API_BASE:
+        return None
+    import time
+    import urllib.request
+    cache = Path("/tmp") / "jobs_listing.json"
+    if cache.exists() and time.time() - cache.stat().st_mtime < JOBS_CACHE_TTL_S:
+        try:
+            return json.loads(cache.read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+    req = urllib.request.Request(f"{JOBS_API_BASE}/jobs",
+                                 headers={"x-mc-access": MC_RESULTS_TOKEN})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            jobs = [j for j in json.loads(r.read()).get("jobs", []) if j.get("ready")]
+        cache.write_text(json.dumps(jobs))
+        return jobs
+    except Exception as e:
+        print(f"[chat] jobs listing unavailable: {e}")
+        return None
+
+
+def job_fetcher(job_id: str) -> dict | None:
+    """SwingContext.fetcher for library swings: scorecard (+ball +meta) by id.
+    Only well-formed job ids are ever fetched (the model supplies these)."""
+    if not _JOB_ID.match(str(job_id)):
+        return None
+    sc = job_scorecard_path(job_id)
+    if sc is None:
+        return None
+    out = {"scorecard": json.loads(Path(sc).read_text(encoding="utf-8"))}
+    ball = job_ball_path(job_id)
+    if ball:
+        try:
+            out["ball"] = json.loads(Path(ball).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    meta = job_meta_path(job_id)
+    if meta:
+        try:
+            out["meta"] = json.loads(Path(meta).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    return out
+
+
 def _sanitize_history(raw) -> list[dict]:
     """Keep only alternating user/assistant TEXT turns. Drop tool blocks and any
     non-string content the client may have injected."""
@@ -135,12 +215,16 @@ def ball_path_for(scorecard: str | Path) -> Path | None:
 def chat_once(scorecard: str | Path, question: str, history: list[dict] | None = None,
               compare: str | Path | None = None,
               backend_factory: Callable[[], C.Backend] = C.AnthropicBackend,
-              ball: str | Path | None = None) -> dict:
+              ball: str | Path | None = None,
+              library: list[dict] | None = None, current_id: str | None = None,
+              fetcher=None) -> dict:
     """Run ONE grounded chat turn. Pure core — no HTTP, injectable backend."""
     if not question or not question.strip():
         return {"error": "empty question"}
     ctx = C.SwingContext.from_files(scorecard, compare,
-                                    ball_path=ball or ball_path_for(scorecard))
+                                    ball_path=ball or ball_path_for(scorecard),
+                                    library=library, current_id=current_id,
+                                    fetcher=fetcher)
     convo = C.Conversation(ctx, backend_factory())
     convo.messages = _sanitize_history(history)  # untrusted text-only context
     res = convo.ask(question.strip()[:MAX_QUESTION_CHARS])
@@ -192,6 +276,7 @@ def handler(event, _ctx=None):
         if sc is None:
             return _resp(404, {"error": "no scorecard for this upload (yet)"})
         ball = job_ball_path(raw_id)         # None for older/trackless jobs
+        library = jobs_library()             # None -> session tools stay off
     else:
         try:
             clip_id = int(raw_id)
@@ -231,8 +316,12 @@ def handler(event, _ctx=None):
                 return _resp(400, {"error": "invalid compare_clip_id"})
 
     try:
+        is_job = isinstance(clip_id, str)
         out = chat_once(sc, question, history=body.get("history"), compare=compare,
-                        ball=ball)
+                        ball=ball,
+                        library=library if is_job else None,
+                        current_id=clip_id if is_job else None,
+                        fetcher=job_fetcher if is_job else None)
     except Exception as e:  # never leak a stack trace; surface a request id in logs
         print(f"[chat] error: {type(e).__name__}: {e}")
         return _resp(502, {"error": "chat backend failed"})
