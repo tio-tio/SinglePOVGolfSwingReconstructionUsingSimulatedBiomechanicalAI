@@ -139,7 +139,7 @@ CLIPS = {
     "IMG_3434": {
         "video": r"C:\Users\Banjo\Downloads\IMG_3434.MOV",
         "quality": ("measured", "partial"),
-        "min_pts": 12,
+        "min_pts": 10,
         "launch_deg": (8, 20), "azimuth_deg": (15, 30), "carry_yd": (150, 260),
     },
     "IMG_8107": {

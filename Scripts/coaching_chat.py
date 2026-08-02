@@ -284,12 +284,15 @@ def _t_get_ball_flight(ctx: SwingContext, inp: dict) -> dict:
             "n_track_points": ball.get("n_track_points"),
             "direction_note": ball.get("azimuth_note"),
         }
+        # The range goes to the model on BOTH tiers: a single-camera fit pins the
+        # flight's shape much better than its scale, and the verifier only lets
+        # the model quote numbers the tool actually returned.
+        ci = ball.get("ci_10_90") or {}
+        if ci.get("carry_yd"):
+            res["carry_range_yd"] = [round(ci["carry_yd"][0]), round(ci["carry_yd"][1])]
+        if ci.get("speed_mph"):
+            res["speed_range_mph"] = [round(ci["speed_mph"][0]), round(ci["speed_mph"][1])]
         if q == "measured":
-            ci = ball.get("ci_10_90") or {}
-            if ci.get("carry_yd"):
-                res["carry_range_yd"] = [round(ci["carry_yd"][0]), round(ci["carry_yd"][1])]
-            if ci.get("speed_mph"):
-                res["speed_range_mph"] = [round(ci["speed_mph"][0]), round(ci["speed_mph"][1])]
             res["how_to_phrase"] = (
                 "MEASURED: the ball was tracked in the video and these numbers come from a "
                 "physics fit to that track. Answer distance questions confidently - e.g. "
@@ -300,7 +303,8 @@ def _t_get_ball_flight(ctx: SwingContext, inp: dict) -> dict:
             res["how_to_phrase"] = (
                 "PARTIAL: launch direction and angle were measured from the video ball track, "
                 "but ball speed was assumed from club norms. State direction and launch "
-                "confidently; give carry as an estimate informed by the measured launch.")
+                "confidently; give carry as an estimate informed by the measured launch, and "
+                "prefer carry_range_yd over the single number if the golfer presses on distance.")
         traj = ball.get("trajectory_world")
         if traj:
             res["_ui_trajectory"] = traj

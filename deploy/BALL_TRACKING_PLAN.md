@@ -1,5 +1,9 @@
 # Ball Tracking — Research & Implementation Plan
 
+> **2026-07-27 accuracy pass (L1–L6) — see "Accuracy pass" at the end of this file.**
+> Reported symptoms: hallucinated flights, every ball drawn on a high arc, distance
+> always over-estimated. All three reproduced and fixed; `engine` is now `balltrack-v2`.
+
 Goal: a ball-tracking stage that runs in **parallel with the 2D skeleton stage**, followed by a
 **3D uplift of the ball trajectory**, wired end-to-end into the deployed pipeline and validated on
 `C:\Users\Banjo\Downloads\IMG_3434.MOV` and `C:\Users\Banjo\Downloads\IMG_8107.MOV`.
@@ -276,3 +280,126 @@ CloudFront/logs CLI args — use PowerShell.
   "simulated estimate" hedging — reserve the hedge for `partial` (direction measured, speed
   assumed) and `simulated` (no track) tiers. Tier + phrasing guidance must be explicit in the
   tool result so the grounding verifier accepts the confident phrasing.
+
+## Accuracy pass (2026-07-27) — L1–L6
+
+User report: "the model is hallucinating swings, always assumes a high arch when
+sometimes the ball goes straight/flatter, and it over-estimates distance every time."
+All three reproduced on real clips. The validation set gained a third clip,
+`IMG_8110.MOV` (same venue, no usable ball flight), as a **negative** case.
+
+### L1 — investigation (root causes, all measured rather than guessed)
+1. **Camera-pitch sign inverted.** `_cam_pts` used `atan((cy - horizon_y)/f)`. With the
+   camera pitched up by t the horizon projects to `cy + f*tan(t)`, so the sign was
+   backwards and the fit absorbed the error into launch angle — **launch inflated by
+   ~2x the camera pitch**. Since `estimate_horizon_y` is clamped to `0.2H..0.62H`
+   (mostly above centre) the bias was almost always *upward*: hence "always a high
+   arch". IMG_3434 came out at launch 26.5 deg, apex 80 yd, 9.2 s hang time —
+   physically absurd for a driver.
+2. **Optimizer landing in local minima.** A single joint Nelder-Mead from one coarse
+   start returned 119 mph on *noise-free* synthetic data whose truth was 150 mph.
+3. **Ball speed is barely identifiable** from a ~0.6 s track. Profiling the loss over
+   speed, everything from 130-210 mph sat within 1 px of the best fit (carry 200-360
+   yd). The old bootstrap resampled points and jittered focal length but never moved
+   along that flat direction, so it reported +-5 yd on a quantity good to about +-60 —
+   and the point estimate fell *outside* its own CI.
+4. **No plausibility prior.** An unpriored free fit walks to the top of the speed grid,
+   reporting tour-pro carries (259, and after the geometry fix 317 yd) for every swing.
+   This is the distance over-estimate.
+5. **No fit-quality gate.** Any chain passing the 2D filters became a confident
+   "measured" flight. IMG_8110 produced a 30.2 deg launch / 62 yd apex / 204 yd carry
+   from an object whose x never moved (444.9 -> 444.7 over 12 frames) while y decayed
+   exponentially — a stationary rising object, not a ball.
+6. **UI arc normalised x and y independently**, stretching every trajectory to fill the
+   SVG box: a flat 190 yd drive and a 60 yd apex wedge drew the *identical* rainbow.
+   The arc's shape carried no information at all.
+
+### L2 — geometry, optimizer, honest uncertainty
+- Pitch computed with the correct sign, clamped to +-25 deg.
+- `profile_speed` sweeps the flat direction explicitly; `fit_at_speed` is multi-start;
+  `_project(fast=True)` truncates the simulation to the observed window (~10x cheaper),
+  which pays for the extra search.
+- A soft log-normal prior ties ball speed to the club envelope (sigma 15%, 1.5 px per
+  sigma), regularising the flat direction instead of letting it run away.
+- `confidence_band` replaces `bootstrap`: every solution within 1 px of the best, over
+  both the speed profile and a +-10% depth-anchor jitter.
+- **The tier decision uses the PIXEL-ONLY band** while the reported band is the
+  posterior — otherwise a tight prior talks you into calling a speed "measured" that
+  the video never pinned down.
+- The synthetic round-trip (an independent, first-principles projector) now recovers
+  truth to +-0.1 mph / +-0.0 deg at every camera pitch, and is *invariant* to pitch as
+  the geometry demands (spread 0.02 deg across -12..+12 deg).
+
+### L3 — preprocessing (measured, not assumed)
+Kept: sequential decode (per-frame `POS_FRAMES` seeking is slow and unreliable on phone
+HEVC), Hanning-windowed phase correlation, and CLAHE — but CLAHE only as a *second
+pass*, because it is not a global win: it rescues a ball lost in bright clutter
+(IMG_8107: 8 -> 15 points) and loses one that was already high-contrast in a dark bay
+(IMG_3434). Both passes feed a single candidate pool.
+
+**Rejected after measurement** (12-config matrix across the 3 clips): motion-streak blob
+gating (area<=220 with a fill-ratio test) and a static-clutter occupancy mask. Neither
+improved any clip; the extra candidates were clubhead and netting chains, and on the
+negative clip they manufactured fits. Reverted to the R5 blob gate.
+
+### L4 — selection by ballistic fit (what actually kills the hallucinations)
+The 2D score cannot separate the ball from the clubhead — both leave the same origin at
+the same instant. The tracker now returns a *shortlist* (deduped by point overlap
+rather than start pixel) and `analyze` re-ranks it by how well each chain reprojects as
+a real flight:
+- each chain is scored at full length **and** trimmed (the predictive extension runs
+  past the ball and the clutter it picks up lands at the tail, where it does the most
+  damage — IMG_3434's real track ran on to f330 and its residual went 2.5 -> 12 px);
+- the physical gates are applied **during** ranking, not only to the winner;
+- among valid flights, length is traded against residual (1.5 points per px), because
+  ranking on mean residual alone rewards whittling a chain down to a fragment;
+- the winner's well-conditioned fit is then used to reclaim tail points the
+  conservative trim dropped.
+
+Gates: residual <= 4.5 px (real tracks fit at 2.5-3.2; the best chain the negative clip
+can offer is 5.6) and |launch_dt| <= 0.12 s (a real ball leaves at impact; the
+hallucinated chains need to start 0.19-0.22 s away).
+
+### L5 — the replay arc was tilted by the camera
+`trajectory_cam_m` handed the 3D replay **camera-frame** points while the replay is a
+*leveled* frame, so the arc inherited the camera tilt: on IMG_3434's 6.8 deg downward
+camera the ball "landed" 21 m below the tee. `ball_track` now emits `trajectory_tee_m`
+(level, tee at origin) and `ball_step` prefers it. Verified in the viewer: landing y
+-18.46 -> -0.05 units, apex/carry ratio 0.140 against a true 0.139.
+
+### L6 — UI honesty and regression tests
+- `arcSVG` uses **one scale for both axes**, so the drawing carries the flight's real
+  proportions. Verified in-browser: the measured arc draws at 39.3/280 = 0.140 against
+  a true 29/209 = 0.139, and the measured vs what-if arcs now differ in height
+  (39.3 vs 34.8) where before both were pinned to the full box height.
+- The carry range is shown on both tiers in the card and returned to the chat model on
+  both tiers (the grounding verifier only lets it quote numbers the tool returned).
+- `Scripts/test_ball_track.py` rewritten: synthetic round-trip + pitch-invariance + a
+  flat-launch case (a 7 deg drive must not come back lofted) + the three clips
+  including the negative one. The synthetic half needs no video and always runs.
+
+### Results on the validation clips
+| clip | before | after |
+|---|---|---|
+| IMG_3434 | measured, launch 26.5 deg, apex 80 yd, carry 259 (CI 261-271), 9.2 s | partial, launch 15.1 deg, azim +21.9 deg, apex 29 yd, carry 209 (203-245), 6.2 s |
+| IMG_8107 | partial, launch 6.9 deg, carry 184 | partial, launch 9.2 deg, azim +18.2 deg, apex 17 yd, carry 195 (187-232) |
+| IMG_8110 | **partial, launch 30.2 deg, apex 62 yd, carry 204** (hallucinated) | **simulated** — rejected, "fitted launch is 0.22s from impact" |
+
+Both real clips now land on `partial`: launch angle and start direction are measured,
+distance is an envelope-anchored estimate **with a published range**. That is the
+honest reading of a single 30 fps camera. 3434's flatter 15.1 deg / 29 yd apex and
+8107's 9.2 deg / 17 yd apex are now clearly different shapes — exactly the "sometimes
+it goes straight or flatter" case that used to be flattened into one high arc.
+`measured` (confident speed and carry) is still reachable, but now requires the pixels
+themselves to constrain the scale.
+
+### Not done / follow-ups
+- **Not deployed.** The cloud image and Lambda still run the old code; shipping needs
+  the CodeBuild image loop, a chat-Lambda rezip, and `s3 cp` + CloudFront invalidation
+  (see I6).
+- The thresholds (4.5 px, 0.12 s, the 1.5 length/residual trade) are calibrated on three
+  clips from one venue. Worth re-checking against a wider set before trusting them
+  broadly.
+- The `measured` tier is now rarely reached. Earning it back is a detection problem:
+  longer tracks condition the scale better (n=30 visibly sharpens the speed profile).
+  A learned tiny-object detector (TrackNet/WASB, R4's upgrade path) is the real answer.
