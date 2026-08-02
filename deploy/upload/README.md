@@ -14,14 +14,23 @@ S3 (HTTP 204) → object lands at `01_inputs/uploads/<job_id>/<file>`. That PUT 
 triggers the EventBridge→SQS→processing path in `full_app.yaml`.
 
 ## Contract
-`POST {filename, content_type}` →
-`{ job_id, object_key, url, fields, max_mb, expires_in, result_prefix }`
+`POST {filename, content_type, session?: {session_id?, session_label?, club?,
+setting?, ball?, notes?, lat?, lon?}}` →
+`{ job_id, session_id, object_key, url, fields, max_mb, expires_in, result_prefix }`
 Client does a multipart POST of `fields` + the file to `url`; then polls
 `result_prefix` (`03_outputs/<job_id>/`) for pipeline output.
 
+Chat v2 sessions: the whitelisted `session` fields (validated by
+`Scripts/session_meta.clean_meta`) are signed into the presigned POST as
+`x-amz-meta-mc-*` object metadata — they ride on the video object itself so no
+extra S3 write fires the processing trigger. `session_id` and `uploaded_at` are
+auto-minted when the client omits them. The processing Lambda copies the
+metadata to `03_outputs/<job_id>/job_meta.json`.
+
 ## Redeploy
 ```bash
-cd deploy/upload && zip -r ../../build/upload-lambda.zip upload_handler.py
+# NB: session_meta.py must ship inside the zip (flat, next to the handler)
+zip -j build/upload-lambda.zip deploy/upload/upload_handler.py Scripts/session_meta.py
 aws lambda update-function-code --function-name motion-caddie-upload-url \
   --zip-file fileb://build/upload-lambda.zip --profile capstone
 ```

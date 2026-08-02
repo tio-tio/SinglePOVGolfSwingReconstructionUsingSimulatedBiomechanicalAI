@@ -64,7 +64,13 @@ ARTIFACTS = ["overlay.mp4", "replay_3d.json", "metrics.json", "explanation.json"
              "scorecard.json",
              # measured ball track + physics-fit flight (chat tool + trajectory UI);
              # written with quality:"simulated" when no confident track exists
-             "ball_3d.json"]
+             "ball_3d.json",
+             # session/context metadata (uploaded_at, session_id, club, notes …) —
+             # copied from the video's x-amz-meta-mc-* fields; the chat coach and
+             # the portal's session grouping read it. jobs_handler EXCLUDES this
+             # file from its date aggregate so later save_context edits can't
+             # shift a job's session.
+             "job_meta.json"]
 # the web app's pollJob() marks a job ready only once ALL of these exist — fail
 # the message loudly (SQS retry) rather than leave a job that never completes
 REQUIRED_ARTIFACTS = {"overlay.mp4", "replay_3d.json", "metrics.json", "explanation.json"}
@@ -290,6 +296,22 @@ def _as_uuid(seed: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
 
 
+def _write_job_meta(bucket: str, key: str, work: Path, job_id: str) -> None:
+    """Session/context metadata: the video's x-amz-meta-mc-* fields (stamped by
+    the upload handler's presigned POST) -> work/job_meta.json, published with
+    the other artifacts. Never fatal — a job without meta clusters by its S3
+    date, exactly like every pre-chat-v2 job."""
+    try:
+        from session_meta import meta_from_s3_metadata
+        head = _s3.head_object(Bucket=bucket, Key=key)
+        meta = meta_from_s3_metadata(head.get("Metadata"))
+        meta.setdefault("uploaded_at",
+                        head["LastModified"].isoformat(timespec="seconds"))
+        (work / "job_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    except Exception as e:
+        print(f"[proc] job {job_id}: job_meta skipped ({type(e).__name__}: {e})", flush=True)
+
+
 # --------------------------------------------------------------------------
 def handler(event, _ctx=None):
     processed = []
@@ -304,6 +326,7 @@ def handler(event, _ctx=None):
         except Exception as e:  # deleted/expired upload (30d TTL) — drop, don't poison retries
             print(f"[proc] job {job_id}: source object gone ({type(e).__name__}) — skipping", flush=True)
             continue
+        _write_job_meta(bucket, key, work, job_id)
         _normalize_orientation(video, job_id)
         out = _pipeline(video, work)
         uploaded = _upload_artifacts(work, out["stem"], job_id)

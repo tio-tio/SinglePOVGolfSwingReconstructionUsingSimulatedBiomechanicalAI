@@ -36,6 +36,16 @@ Once granted, the remaining steps are already scoped (no further asks):
    (s3:PutBucketCors is within the existing S3 grant’s spirit — it may need
    adding if the sync fails: `s3:PutBucketCORS` on `motion-caddie-uploads-*`).
 
+## Chat v2 sessions (2026-08-01, not yet applied)
+- **jobs Lambda role** needs `s3:PutObject` on
+  `motion-caddie-artifacts-*/03_outputs/*` for the new `POST /jobs` meta-update
+  route (save_context / session labels). Until granted, POST returns 502 and
+  everything else keeps working.
+- **API Gateway** `bk7s56lvq3`: add route `POST /jobs` → the existing jobs
+  Lambda integration (it routes by HTTP method internally).
+- The jobs + upload Lambda zips must now bundle `Scripts/session_meta.py`
+  (flat, next to the handler — see each README's zip command).
+
 ## ✅ CHAT IS LIVE — Bedrock (bedrock-runtime) + Claude Haiku 4.5, no API key
 
 `motion-caddie-chat` runs with `CHAT_BACKEND_PROVIDER=bedrock-runtime` +
