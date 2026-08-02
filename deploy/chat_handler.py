@@ -180,7 +180,38 @@ def job_fetcher(job_id: str) -> dict | None:
             out["meta"] = json.loads(Path(meta).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             pass
+    diag = _fetch_job_file(job_id, "pose_diag.json", "diag")
+    if diag:
+        try:
+            out["diag"] = json.loads(Path(diag).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
     return out
+
+
+def job_saver(job_id: str, fields: dict) -> dict | None:
+    """SwingContext.saver: persist golfer-stated context via POST /jobs (the
+    meta-update route). Returns the merged meta, or None on any failure."""
+    if not JOBS_API_BASE or not _JOB_ID.match(str(job_id)):
+        return None
+    import urllib.request
+    req = urllib.request.Request(
+        f"{JOBS_API_BASE}/jobs", method="POST",
+        headers={"content-type": "application/json", "x-mc-access": MC_RESULTS_TOKEN},
+        data=json.dumps({"id": job_id, "meta": fields}).encode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            merged = json.loads(r.read()).get("meta")
+    except Exception as e:
+        print(f"[chat] save_context failed for {job_id}: {e}")
+        return None
+    # drop stale /tmp caches so the next request sees the new meta
+    for stale in (Path("/tmp") / f"job_meta_{job_id}.json", Path("/tmp") / "jobs_listing.json"):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return merged
 
 
 def _sanitize_history(raw) -> list[dict]:
@@ -217,14 +248,14 @@ def chat_once(scorecard: str | Path, question: str, history: list[dict] | None =
               backend_factory: Callable[[], C.Backend] = C.AnthropicBackend,
               ball: str | Path | None = None,
               library: list[dict] | None = None, current_id: str | None = None,
-              fetcher=None) -> dict:
+              fetcher=None, saver=None) -> dict:
     """Run ONE grounded chat turn. Pure core — no HTTP, injectable backend."""
     if not question or not question.strip():
         return {"error": "empty question"}
     ctx = C.SwingContext.from_files(scorecard, compare,
                                     ball_path=ball or ball_path_for(scorecard),
                                     library=library, current_id=current_id,
-                                    fetcher=fetcher)
+                                    fetcher=fetcher, saver=saver)
     convo = C.Conversation(ctx, backend_factory())
     convo.messages = _sanitize_history(history)  # untrusted text-only context
     res = convo.ask(question.strip()[:MAX_QUESTION_CHARS])
@@ -321,7 +352,8 @@ def handler(event, _ctx=None):
                         ball=ball,
                         library=library if is_job else None,
                         current_id=clip_id if is_job else None,
-                        fetcher=job_fetcher if is_job else None)
+                        fetcher=job_fetcher if is_job else None,
+                        saver=job_saver if is_job else None)
     except Exception as e:  # never leak a stack trace; surface a request id in logs
         print(f"[chat] error: {type(e).__name__}: {e}")
         return _resp(502, {"error": "chat backend failed"})

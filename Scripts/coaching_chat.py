@@ -79,8 +79,10 @@ class SwingContext:
     # --- chat v2 library browsing (uploaded jobs only; None on demo clips) ---
     library: list[dict] | None = None   # /jobs listing (+ inlined job_meta fields)
     current_id: str | None = None       # the active swing's job id in `library`
-    fetcher: Any = None                 # fn(job_id) -> {"scorecard","ball","meta"}|None
+    fetcher: Any = None                 # fn(job_id) -> {"scorecard","ball","meta","diag"}|None
+    saver: Any = None                   # fn(job_id, fields) -> merged meta | None
     loaded: dict = field(default_factory=dict)   # job_id -> scorecard (via load_swing)
+    bundles: dict = field(default_factory=dict)  # job_id -> full fetcher bundle
     fetches: int = 0                    # per-request artifact-fetch budget used
 
     @classmethod
@@ -119,7 +121,20 @@ class SwingContext:
         sc = bundle.get("scorecard")
         if sc:
             self.loaded[swing_id] = sc
+            self.bundles[swing_id] = bundle
         return sc
+
+    def bundle_for(self, swing_id: str) -> dict:
+        """Full artifact bundle (meta/ball/diag) for the current or a loaded
+        swing — fetches on demand for the current swing."""
+        if swing_id in self.bundles:
+            return self.bundles[swing_id]
+        if swing_id == self.current_id and self.fetcher is not None \
+                and self.fetches < FETCH_BUDGET:
+            self.fetches += 1
+            self.bundles[swing_id] = self.fetcher(swing_id) or {}
+            return self.bundles[swing_id]
+        return {}
 
     def library_entry(self, swing_id: str) -> dict | None:
         for j in self.library or []:
@@ -482,6 +497,108 @@ def _t_compare_sessions(ctx: SwingContext, inp: dict) -> dict:
     return res
 
 
+# ---- chat v2: context / elicitation tools (uploaded jobs only) ------------ #
+
+def _t_get_conditions(ctx: SwingContext, inp: dict) -> dict:
+    """Recorded context for a swing: session note, club, setting, and the
+    weather backfilled at upload time (when the golfer shared location)."""
+    swing_id = str((inp or {}).get("swing_id") or ctx.current_id or "")
+    if not swing_id:
+        return {"available": False, "note": "No context is recorded for demo clips."}
+    if swing_id != ctx.current_id and swing_id not in ctx.loaded:
+        if ctx.fetch_swing(swing_id) is None:
+            return {"available": False, "swing_id": swing_id,
+                    "note": "Couldn't load that swing — check list_sessions."}
+    meta = dict(ctx.bundle_for(swing_id).get("meta") or {})
+    entry = ctx.library_entry(swing_id) or {}
+    for k in ("club", "setting", "ball", "notes", "session_label", "uploaded_at"):
+        if entry.get(k) and not meta.get(k):
+            meta[k] = entry[k]
+    if not meta:
+        return {"available": False, "swing_id": swing_id,
+                "note": "Nothing recorded for this swing yet. Ask the golfer (club? "
+                        "range or course? conditions?) and store answers with save_context."}
+    out = {"available": True, "swing_id": swing_id,
+           **{k: meta[k] for k in ("uploaded_at", "session_label", "club", "setting",
+                                   "ball", "notes") if meta.get(k)}}
+    wx = meta.get("weather")
+    if isinstance(wx, dict):
+        out["weather"] = wx
+        out["weather_note"] = (
+            "Recorded automatically for the upload hour/location. wind_dir_met_deg is "
+            "the compass direction the wind blew FROM (meteorological) - you don't know "
+            "the shot direction, so ask the golfer whether it played as head/tail/cross "
+            "before feeding wind into estimate_ball_flight.")
+    missing = [k for k in ("club", "setting") if not out.get(k)]
+    if missing:
+        out["missing"] = missing
+        out["elicit_hint"] = ("If the answer would change your reply, ask ONE short "
+                              "follow-up for: " + ", ".join(missing) +
+                              " - then store it with save_context.")
+    return out
+
+
+def _t_save_context(ctx: SwingContext, inp: dict) -> dict:
+    """Persist golfer-stated context (club, setting, notes, weather they told
+    us) onto the swing's job_meta.json so future conversations know it."""
+    inp = inp or {}
+    swing_id = str(inp.get("swing_id") or ctx.current_id or "")
+    if ctx.saver is None or not swing_id:
+        return {"saved": False, "note": "Context can't be saved in this chat."}
+    fields = {k: inp[k] for k in ("club", "setting", "ball", "notes", "session_label")
+              if isinstance(inp.get(k), str) and inp[k].strip()}
+    if not fields:
+        return {"saved": False,
+                "note": "Nothing to save — pass club/setting/ball/notes/session_label."}
+    merged = ctx.saver(swing_id, fields)
+    if merged is None:
+        return {"saved": False, "swing_id": swing_id,
+                "note": "Saving failed (endpoint unavailable). Answer normally; the "
+                        "golfer's statement still applies for THIS conversation."}
+    # keep this conversation's view coherent with what was just saved
+    if swing_id in ctx.bundles:
+        ctx.bundles[swing_id]["meta"] = merged
+    entry = ctx.library_entry(swing_id)
+    if entry is not None:
+        entry.update({k: v for k, v in fields.items()})
+    return {"saved": True, "swing_id": swing_id, "stored": fields,
+            "note": "Saved — future conversations about this swing will know this."}
+
+
+def _t_get_capture_quality(ctx: SwingContext, inp: dict) -> dict:
+    """Pose-tracking quality diagnostics for a swing's video + filming guidance.
+    This is about the VIDEO, not the golf swing."""
+    swing_id = str((inp or {}).get("swing_id") or ctx.current_id or "")
+    diag = ctx.bundle_for(swing_id).get("diag") if swing_id else None
+    if not isinstance(diag, dict):
+        return {"available": False,
+                "note": "No capture diagnostics for this swing (older upload or demo clip)."}
+    swaps = diag.get("swaps", {})
+    conf = diag.get("conf", {})
+    total_swaps = sum(int(s.get("n_swaps") or 0) for s in swaps.values()
+                      if isinstance(s, dict))
+    worst = max(((k, float(s.get("swaps_per_100f") or 0)) for k, s in swaps.items()
+                 if isinstance(s, dict)), key=lambda kv: kv[1], default=(None, 0.0))
+    repaired = diag.get("repair", {}).get("n_swaps_repaired", {})
+    out = {
+        "available": True, "swing_id": swing_id,
+        "n_frames": diag.get("n_frames"),
+        "left_right_swaps": total_swaps,
+        "worst_joint": worst[0], "worst_swaps_per_100_frames": round(worst[1], 1),
+        "n_swaps_repaired": sum(int(v or 0) for v in repaired.values()) if repaired else 0,
+        "wrist_confidence_mean": round((float(conf.get("left_wrist_mean") or 0) +
+                                        float(conf.get("right_wrist_mean") or 0)) / 2, 2)
+        if conf else None,
+        "why_it_matters": ("Left/right swaps and low landmark confidence are what push "
+                           "metrics into the low-confidence tier."),
+        "filming_guidance": ("Cleanest captures: phone at waist height on a tripod, "
+                             "down-the-line or face-on, the whole body in frame, good "
+                             "light, 60 fps if available, no other people in shot. This "
+                             "is guidance about FILMING, not about the golf swing."),
+    }
+    return out
+
+
 # (name -> (json-schema, fn)). Schemas are the model-facing tool contract.
 TOOLS: dict[str, tuple[dict, ToolFn]] = {
     "list_indicators": ({
@@ -608,9 +725,45 @@ TOOLS: dict[str, tuple[dict, ToolFn]] = {
                                         "session_id_b": {"type": "string"}},
                          "required": ["session_id_a", "session_id_b"], "additionalProperties": False},
     }, _t_compare_sessions),
+    "get_conditions": ({
+        "description": "Recorded context for a swing: session note, club, range/course, and "
+                       "any weather captured at upload time. Call before answering questions "
+                       "that depend on conditions ('was it the wind?', cross-day fairness) or "
+                       "when the club matters. If something you need is missing, ask the "
+                       "golfer ONE short follow-up, then store the answer with save_context.",
+        "input_schema": {"type": "object",
+                         "properties": {"swing_id": {"type": "string",
+                                                     "description": "default: the current swing"}},
+                         "additionalProperties": False},
+    }, _t_get_conditions),
+    "save_context": ({
+        "description": "Store golfer-stated context on a swing so future conversations know "
+                       "it (club used, range/course/sim, ball type, a short note, a session "
+                       "name). Call this whenever the golfer tells you one of these facts. "
+                       "Never invent values — only save what the golfer actually said.",
+        "input_schema": {"type": "object", "properties": {
+            "swing_id": {"type": "string", "description": "default: the current swing"},
+            "club": {"type": "string"},
+            "setting": {"type": "string", "enum": ["range", "course", "sim"]},
+            "ball": {"type": "string", "enum": ["range", "premium"]},
+            "notes": {"type": "string", "description": "short free-text note, <=200 chars"},
+            "session_label": {"type": "string", "description": "a name for the whole session"},
+        }, "additionalProperties": False},
+    }, _t_save_context),
+    "get_capture_quality": ({
+        "description": "How well the VIDEO tracked (left/right swaps, landmark confidence, "
+                       "repairs) plus filming guidance. Use when the golfer asks why a metric "
+                       "is low-confidence, whether to trust the numbers, or how to film "
+                       "better. This is about the recording, not their golf.",
+        "input_schema": {"type": "object",
+                         "properties": {"swing_id": {"type": "string",
+                                                     "description": "default: the current swing"}},
+                         "additionalProperties": False},
+    }, _t_get_capture_quality),
 }
 
-_LIBRARY_TOOLS = ("list_sessions", "load_swing", "compare_swings", "compare_sessions")
+_LIBRARY_TOOLS = ("list_sessions", "load_swing", "compare_swings", "compare_sessions",
+                  "get_conditions", "save_context", "get_capture_quality")
 
 
 def tool_specs(with_compare: bool, with_library: bool = False) -> list[dict]:
@@ -692,6 +845,22 @@ SESSIONS & PAST SWINGS (only when the session tools are available):
   - The library is the team's shared pilot library — if a swing's name suggests it isn't this
     golfer's, note that rather than presenting it as theirs. Distances stay per-swing (load the
     swing and use its ball flight); never average carries across swings.
+
+CONTEXT & FOLLOW-UP QUESTIONS (only when the context tools are available):
+  - When an answer depends on context you don't have — the club for a flight question, the
+    conditions for "was Thursday's shorter carry the wind?", range-vs-course for a fairness
+    question — check `get_conditions` first. If it's still missing AND it would change your
+    answer, ask ONE short, specific follow-up question instead of assuming. Don't interrogate:
+    one question, then answer with what you have.
+  - When the golfer TELLS you context ("it was my 9-iron", "windy day", "that was on the
+    course"), call `save_context` so it's remembered for future conversations, then continue.
+    Save only what they said; never fabricate a value to store.
+  - Recorded weather's wind direction is the compass direction it blew FROM — you don't know
+    the shot direction, so ask whether it played as headwind/tailwind/crosswind before using
+    wind in a flight simulation.
+  - Questions about metric trustworthiness or filming ("why is that low confidence?", "how
+    should I film?") -> `get_capture_quality`. Its guidance is about the VIDEO — sharing it
+    is fine and is not swing coaching.
 
 When to REFUSE (do not guess):
   - UNMEASURED: the question is about something not in `list_indicators` and not simulable
