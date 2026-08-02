@@ -1,8 +1,14 @@
 # Chat V2 Plan — session-aware coach, richer context, grounded posture coaching
 
-> **STATUS 2026-08-01: IMPLEMENTED in code (6 commits on `aws-deploy-handoff`,
-> 45ecb05..e5bbe63), all offline suites green (369 checks). NOT yet deployed.**
-> Deploy checklist to go live:
+> **STATUS 2026-08-02: LIVE.** Deployed and end-to-end verified against real
+> jobs: upload/jobs Lambda zips, jobs-role IAM (GetObject 03_outputs/* +
+> PutObject */job_meta.json), POST /jobs route, chat Lambda ZIP (env
+> JOBS_API_BASE, CHAT_LLM_TIMEOUT=18, CHAT_LLM_RETRIES=1), processing image
+> v14 (job_meta + Open-Meteo backfill — verified with a live Toronto upload),
+> web bundle + CloudFront invalidation. NB: the chat Lambda is a ZIP
+> (deploy/chat/build_lambda_zip.sh), not the container this checklist assumed;
+> v14 deliberately did NOT pick up the ball-tracking-v2 commits (separate
+> deploy). The checklist below is retained for reference:
 > 1. Re-zip + update the **upload** and **jobs** Lambdas (each zip now bundles
 >    `Scripts/session_meta.py` flat — see the READMEs' zip commands).
 > 2. Grant the jobs role `s3:PutObject` on `03_outputs/*` and add the
