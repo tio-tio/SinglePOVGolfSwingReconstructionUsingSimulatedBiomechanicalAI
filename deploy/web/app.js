@@ -688,21 +688,36 @@ function loadRenderView(clipId, isUpload) {
 function renderPlain(explanation) {
   const el = $("#view-plain");
   el.innerHTML = "";
+  // metrics.json status vocab varies by generation: "in" (cloud) vs "good" (older demo)
+  const statusByTag = { good: ["in", "good"], watch: ["watch"], low: ["low"] };
   for (const sec of explanation.sections) {
-    const tagLabel = { good: "Good", watch: "Watch", low: "Low confidence" }[sec.tag] || sec.tag;
-    const chips = (sec.chips || []).map(key => {
+    const tag = String(sec.tag || "").replace(/[^a-z-]/g, "");
+    const tagLabel = { good: "Good", watch: "Watch", low: "Low confidence", info: "Info" }[tag] || tag;
+    // key points as tiles: explicit chips when the explanation names them, else
+    // every metric whose status matches this section (same data as the numbers tab)
+    let keys = sec.chips || [];
+    if (!keys.length && statusByTag[tag]) {
+      keys = state.bundle.metrics.metrics
+        .filter(m => statusByTag[tag].includes(m.status)).map(m => m.key);
+    }
+    const tiles = keys.map(key => {
       const m = metricByKey(key);
-      return m ? `<span class="chip">${esc(m.label)} · <b>${esc(m.you_display)}</b></span>` : "";
+      return m ? `<div class="fact-tile ${tag}">
+          <span class="fact-label">${esc(m.label)}</span>
+          <span class="fact-value">${esc(m.you_display)}</span>
+          <span class="fact-tour">tour ${esc(m.tour_display)}</span>
+        </div>` : "";
     }).join("");
     const div = document.createElement("div");
-    div.className = "eval-section";
+    // tile-heavy sections take the full row; short ones share one
+    const wide = tag === "good" || keys.length >= 4;
+    div.className = `eval-section ${tag}${wide ? " wide" : ""}`;
     div.innerHTML = `
       <div class="eval-tagrow">
-        <span class="eval-tag ${esc(sec.tag)}">${esc(tagLabel)}</span>
+        <span class="eval-tag ${tag}">${esc(tagLabel)}</span>
         <h3>${esc(sec.title)}</h3>
       </div>
-      <p>${esc(sec.body)}</p>
-      <div class="chips">${chips}</div>`;
+      ${tiles ? `<div class="fact-tiles">${tiles}</div>` : `<p>${esc(sec.body)}</p>`}`;
     el.appendChild(div);
   }
 }

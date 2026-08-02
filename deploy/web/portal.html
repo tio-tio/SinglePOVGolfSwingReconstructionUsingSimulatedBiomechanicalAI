@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0c5c3a">
 <title>MotionCaddie — your swing, measured</title>
-<link rel="stylesheet" href="styles.css?v=20260801b">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap">
+<link rel="stylesheet" href="styles.css?v=20260802e">
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
 <style>
 /* portal-only touches; everything else comes from the shared styles.css */
@@ -46,9 +49,15 @@
 <section id="screen-pick" class="screen">
   <div class="hero">
     <h1>Your swing, measured.</h1>
-    <p class="hero-sub" id="hero-sub">Upload one phone video. MotionCaddie runs the full 3D
-    pipeline in the cloud and returns a stabilized pose overlay, a 3D replay you can spin,
-    tour-reference metrics, and a coach you can ask about any of it.</p>
+    <p class="hero-sub" id="hero-sub">Feel isn't fact — most swing flaws are invisible at
+    full speed. One phone video becomes measured 3D motion, compared against 400 tour
+    swings, so you practice on numbers instead of guesses.</p>
+    <ul class="hero-points" aria-label="What you get">
+      <li>Pose overlay</li>
+      <li>3D replay</li>
+      <li>Tour-reference metrics</li>
+      <li>A coach grounded in your data</li>
+    </ul>
     <div class="hero-actions">
       <button id="btn-upload" class="btn-primary btn-lg" type="button">Upload swing video</button>
       <button id="btn-record" class="btn-secondary btn-lg" type="button">Record now</button>
@@ -302,6 +311,6 @@
 <script src="vendor/marked.min.js"></script>
 <script src="chat.js?v=20260726b"></script>
 <script src="ballflight.js?v=20260718d"></script>
-<script src="portal.js?v=20260801c"></script>
+<script src="portal.js?v=20260802b"></script>
 </body>
 </html>
