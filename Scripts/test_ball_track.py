@@ -35,12 +35,17 @@ CX, CY = W / 2, H / 2
 # --------------------------------------------------------------------------
 
 def project_truth(speed, launch, azim, spin, pitch_deg, d_m=4.0, hcam_m=1.4,
-                  fps=30.0, n_frames=20):
+                  fps=30.0, n_frames=20, W=W, H=H):
     """Camera-level frame: Xw right, Uw up, Fw forward. Camera pitched UP by t:
         Z_cam = Uw sin t + Fw cos t
         Y_cam = -Uw cos t + Fw sin t
     so the horizon (Uw=0, Fw->inf) lands on row cy + f*tan(t).
+
+    The camera's focal length in PIXELS follows the frame's short side: one lens
+    and one field of view, sampled onto whatever grid the phone recorded.
     """
+    F = bt.DEFAULT_F_PX * min(W, H) / bt.REF_SHORT_SIDE
+    CX, CY = W / 2, H / 2
     t = math.radians(pitch_deg)
     r = simulate_flight(speed, launch, spin, 0.0, 0.0, trajectory_points=400)
     traj = np.array(r["trajectory"]) * YD_M          # [downrange, height, side]
@@ -65,26 +70,27 @@ def project_truth(speed, launch, azim, spin, pitch_deg, d_m=4.0, hcam_m=1.4,
     return obs, origin, tee_Z, CY + F * math.tan(t), r
 
 
-def _pose_for(tee_Z):
+def _pose_for(tee_Z, W=W, H=H):
     """Pose whose 95th-pct span sets the fitter's depth anchor to tee_Z."""
-    h_px = F * 1.75 / tee_Z
+    h_px = (bt.DEFAULT_F_PX * min(W, H) / bt.REF_SHORT_SIDE) * 1.75 / tee_Z
     return {i: [(300.0, 100.0), (300.0, 100.0 + h_px)] for i in range(30)}
 
 
 def synthetic_case(pitch_deg, speed=150.0, launch=12.0, azim=10.0, spin=2800.0,
-                   noise_px=0.0, seed=1):
+                   noise_px=0.0, seed=1, W=W, H=H):
     obs, origin, tee_Z, horizon, truth = project_truth(
-        speed, launch, azim, spin, pitch_deg)
+        speed, launch, azim, spin, pitch_deg, W=W, H=H)
     if noise_px:
         rng = np.random.default_rng(seed)
         obs = [(f, x + rng.normal(0, noise_px), y + rng.normal(0, noise_px))
                for f, x, y in obs]
-    fit = bt.FlightFitter(obs, 0, 30.0, origin, _pose_for(tee_Z), W, H,
+    fit = bt.FlightFitter(obs, 0, 30.0, origin, _pose_for(tee_Z, W, H), W, H,
                           horizon_y=horizon, backspin_rpm=spin)
     v, _ = fit.fit_free()
     _, r = fit._project(v[0], v[1], v[2], v[3])
     return {"speed": v[0], "launch": v[1], "azim": v[2], "carry": r["carry_yd"],
-            "apex": r["apex_yd"], "truth_carry": truth["carry_yd"]}
+            "apex": r["apex_yd"], "truth_carry": truth["carry_yd"],
+            "resid": fit.pixel_loss(v)}
 
 
 def test_synthetic(failures):
@@ -128,6 +134,32 @@ def test_synthetic(failures):
           f"{'PASS' if ok else 'FAIL'}")
     if not ok:
         failures.append(f"flat flight: launch {g['launch']:.1f} apex {g['apex']:.0f}")
+
+
+def test_resolutions(failures):
+    """The same flight filmed at different resolutions must fit the same.
+
+    Every clip in this file's Part 2 is 720x1280, and so was every clip the
+    fitter was tuned on -- but real uploads are 1080x1920. While the focal
+    length was hardcoded at the 720p value, a 1080p clip fitted ~4.6 deg steep
+    and ~15% short, and its reprojection residual was inflated past the
+    rejection gate, so genuine flights were thrown away as "not a ball flight"
+    and the results page fell back to the generic tier arcs.
+    """
+    print("\n-- resolution invariance (truth: 150 mph, 12.0 deg launch)")
+    for W_, H_ in ((720, 1280), (1080, 1920), (1440, 2560), (2160, 3840),
+                   (1920, 1080)):
+        g = synthetic_case(-6.0, W=W_, H=H_)
+        ok = (abs(g["launch"] - 12.0) <= 1.0
+              and abs(g["carry"] - g["truth_carry"]) <= 8.0
+              and g["resid"] <= bt.MAX_FIT_RESIDUAL_PX)
+        print(f"   {W_:5d}x{H_:<5d} f_px={bt.default_f_px(W_, H_):6.0f} -> "
+              f"launch {g['launch']:5.1f}  carry {g['carry']:5.1f} "
+              f"(truth {g['truth_carry']:.0f})  resid {g['resid']:4.2f}  "
+              f"{'PASS' if ok else 'FAIL'}")
+        if not ok:
+            failures.append(f"resolution {W_}x{H_}: launch {g['launch']:.1f} "
+                            f"carry {g['carry']:.1f} resid {g['resid']:.2f}")
 
 
 # --------------------------------------------------------------------------
@@ -195,6 +227,7 @@ def test_clips(failures):
 def main() -> int:
     failures: list[str] = []
     test_synthetic(failures)
+    test_resolutions(failures)
     test_clips(failures)
     print("\n" + ("ALL PASS" if not failures else f"{len(failures)} FAILURE(S):"))
     for f in failures:

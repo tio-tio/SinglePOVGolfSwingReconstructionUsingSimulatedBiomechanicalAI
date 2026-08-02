@@ -39,6 +39,7 @@ from ball_flight import CLUB_DEFAULTS, simulate_flight, normalize_club
 from video_orientation import open_capture
 
 YD_M = 0.9144
+REF_SHORT_SIDE = 720.0      # DEFAULT_F_PX and every _PX gate below were tuned here
 DEFAULT_F_PX = 910.0        # ~26 mm-equiv phone lens on a 720x1280 portrait video
 F_PX_JITTER = 0.08          # focal prior uncertainty folded into the bootstrap
 MEASURED_MIN_PTS = 15
@@ -58,6 +59,17 @@ PREFIX_HEAD_PTS = 10                        # vetted head the flight is anchored
 PREFIX_GROW_TOL_PX = 7.0                    # how far a later point may stray
 MAX_LAUNCH_DT_S = 0.12                      # flight must start at impact
 LENGTH_RESID_TRADE = 1.5                    # track points worth one px of residual
+
+
+def default_f_px(W: int, H: int) -> float:
+    """Focal length in pixels for a frame this size.
+
+    Focal length in PIXELS is a property of the lens AND the sampling grid, so
+    the 26 mm-equiv phone lens that images at 910 px on 720x1280 images at
+    1365 px on 1080x1920. Anchoring on the SHORT side keeps that true for
+    landscape clips as well as portrait.
+    """
+    return DEFAULT_F_PX * min(W, H) / REF_SHORT_SIDE
 
 
 # --------------------------------------------------------------------------
@@ -425,11 +437,16 @@ def _nelder_mead(loss, x0, steps, max_iter=300, ftol=0.02):
 
 class FlightFitter:
     def __init__(self, track, impact, fps, origin_px, pose, W, H,
-                 f_px=DEFAULT_F_PX, golfer_m=1.75, horizon_y=None,
+                 f_px=None, golfer_m=1.75, horizon_y=None,
                  backspin_rpm=3275.0, speed_prior_mph=None,
                  speed_prior_sigma=SPEED_PRIOR_SIGMA):
         self.cx, self.cy = W / 2, H / 2
-        self.f_px = f_px
+        f_px = self.f_px = default_f_px(W, H) if f_px is None else f_px
+        # Reprojection error is measured in 720p-EQUIVALENT pixels. The same
+        # angular misfit costs proportionally more raw pixels on a bigger frame,
+        # and every _PX constant above was tuned on 720x1280 clips, so scaling
+        # the error once here keeps all of them meaningful at any resolution.
+        self.px_scale = min(W, H) / REF_SHORT_SIDE
         self.spin = backspin_rpm
         # Soft prior keeping ball speed near the club envelope. A ~0.6 s track
         # constrains the trajectory's SHAPE (launch, azimuth) tightly but its
@@ -506,7 +523,7 @@ class FlightFitter:
         return np.array(out), r
 
     def pixel_loss(self, v, obs=None, f_px=None):
-        """Trimmed mean reprojection error in pixels (no prior)."""
+        """Trimmed mean reprojection error in 720p-equivalent pixels (no prior)."""
         dt = v[3] if len(v) > 3 else 0.0
         if not (40 <= v[0] <= 210 and 2 <= v[1] <= 45 and -60 <= v[2] <= 60
                 and -0.25 <= dt <= 0.25):
@@ -515,7 +532,7 @@ class FlightFitter:
         o = self.obs if obs is None else obs
         errs = np.sort(np.linalg.norm(pr - o, axis=1))
         keep = max(6, int(len(errs) * 0.85))        # trimmed mean: tolerate tail junk
-        return float(np.mean(errs[:keep]))
+        return float(np.mean(errs[:keep])) / self.px_scale
 
     def _speed_penalty(self, speed):
         """Prior cost in pixel-equivalent units (0 when no prior is set)."""
@@ -713,7 +730,7 @@ def analyze(video: str | Path, landmarks_csv: str | Path,
                 return cur                   # head is not a flight; let it be rejected
             fa = make_fitter(cur)
             pr, _ = fa._project(vh[0], vh[1], vh[2], vh[3])
-            errs = np.linalg.norm(pr - fa.obs, axis=1)
+            errs = np.linalg.norm(pr - fa.obs, axis=1) / fa.px_scale
             k = PREFIX_HEAD_PTS
             while k < len(cur) and errs[k] <= PREFIX_GROW_TOL_PX:
                 k += 1
@@ -772,7 +789,7 @@ def analyze(video: str | Path, landmarks_csv: str | Path,
         vw, _ = fw.fit_constrained(env_speed)
         fp = make_fitter(parent)
         pr, _ = fp._project(vw[0], vw[1], vw[2], vw[3])
-        errs = np.linalg.norm(pr - fp.obs, axis=1)
+        errs = np.linalg.norm(pr - fp.obs, axis=1) / fp.px_scale
         k = len(track)
         while k < len(parent) and errs[k] <= PREFIX_GROW_TOL_PX:
             k += 1
