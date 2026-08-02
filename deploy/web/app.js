@@ -58,10 +58,34 @@ function hiddenAdd(jobId) {
   localStorage.setItem(HIDDEN_KEY, JSON.stringify(ids.slice(0, 500)));
 }
 
-function libRemove(jobId) {
-  hiddenAdd(jobId);              // survive the portal's team-library sync
+/* uploaded swings live in S3 under a 32-hex job id; demo clips exist only in
+ * this browser and can't be server-deleted (mirrors portal.js) */
+const isUploadedJob = (jobId) => /^[0-9a-f]{32}$/.test(jobId);
+
+async function libRemove(jobId) {
+  const it = libLoad().find(i => i.jobId === jobId);
+  const name = (it && it.name) || "this swing";
+  if (isUploadedJob(jobId) &&
+      !confirm(`Delete "${name}" for the whole team?\n\nThis permanently removes the video and results for everyone — it can't be undone.`)) {
+    return;
+  }
+  hiddenAdd(jobId);              // instant + survives the portal's team-library sync
   libSave(libLoad().filter(i => i.jobId !== jobId));
   renderLibrary();
+  // team-wide hard delete, same call as portal.js libRemove
+  if (isUploadedJob(jobId) && window.API_BASE &&
+      window.Auth && Auth.isDev && Auth.isDev()) {
+    try {
+      const code = (document.cookie.match(/(?:^|;\s*)mc_dev=([^;]+)/) || [])[1] || "";
+      const r = await fetch(`${window.API_BASE}/jobs?id=${jobId}`, {
+        method: "DELETE",
+        headers: { "x-mc-access": decodeURIComponent(code) },
+      });
+      if (!r.ok && r.status !== 404) throw new Error("delete http " + r.status);
+    } catch (e) {
+      console.warn("server-side delete failed (swing hidden locally only):", e);
+    }
+  }
 }
 
 async function loadManifest() {
@@ -1031,8 +1055,11 @@ function renderLibrary() {
       <span class="dash-swing-name" title="${esc(it.name)}">${esc(it.name)}</span>
       <span class="dash-swing-date muted small">${esc(date)}</span>${badge}
       ${ready ? `<button type="button" class="btn-ghost small lib-open">Open result</button>` : ""}
-      <button type="button" class="btn-ghost small lib-remove" title="Remove from this list"
-              aria-label="Remove ${esc(it.name)} from this list">✕</button>
+      ${isUploadedJob(it.jobId)
+        ? `<button type="button" class="btn-ghost small lib-remove" title="Delete this swing for the whole team"
+              aria-label="Delete ${esc(it.name)} for the whole team">✕</button>`
+        : `<button type="button" class="btn-ghost small lib-remove" title="Remove from this list"
+              aria-label="Remove ${esc(it.name)} from this list">✕</button>`}
     </div>`;
   }).join("");
   wrap.querySelectorAll(".lib-open").forEach(b =>

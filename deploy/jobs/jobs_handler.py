@@ -1,4 +1,5 @@
-"""AWS Lambda `GET /jobs` — the dev account's shared swing library.
+"""AWS Lambda `GET /jobs` + `DELETE /jobs?id=<job>` — the dev account's
+shared swing library.
 
 The portal's per-browser localStorage library can't show a teammate's uploads,
 so this endpoint lists EVERY processed upload straight from S3: job prefixes
@@ -6,6 +7,11 @@ under 03_outputs/ in the artifacts bucket (ready = all four required artifacts
 present), joined with the original filenames still sitting in the uploads
 bucket (01_inputs/uploads/<job>/<name> — 30-day TTL, so older jobs fall back
 to a short-id name).
+
+DELETE is a team-wide HARD delete: it removes every S3 object the job owns —
+03_outputs/<job>/ and the TTS narration cache audio/<job>/ in the artifacts
+bucket, plus the original upload 01_inputs/uploads/<job>/. The swings are of
+real people, so "delete" must actually destroy the footage, not hide it.
 
 PRIVATE: uploaded swings are of real people. Callers must present the dev
 access code (?t= query or x-mc-access header) matching MC_RESULTS_TOKEN —
@@ -36,6 +42,7 @@ def _resp(code: int, body) -> dict:
             "headers": {"content-type": "application/json",
                         "cache-control": "no-store",
                         "access-control-allow-origin": "*",
+                        "access-control-allow-methods": "GET,DELETE,OPTIONS",
                         "access-control-allow-headers": "content-type,x-mc-access"},
             "body": json.dumps(body)}
 
@@ -87,12 +94,48 @@ def _upload_names() -> dict[str, str]:
     return names
 
 
+def _delete_prefix(bucket: str, prefix: str) -> int:
+    """Delete every object under bucket/prefix; returns how many went."""
+    deleted = 0
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+        if not keys:
+            continue
+        s3.delete_objects(Bucket=bucket, Delete={"Objects": keys, "Quiet": True})
+        deleted += len(keys)
+    return deleted
+
+
+def _delete_job(event: dict):
+    if not MC_RESULTS_TOKEN:
+        # listing without a configured gate is a dev convenience; DESTROYING
+        # footage of real people without one is a misconfiguration
+        return _resp(403, {"error": "delete disabled: MC_RESULTS_TOKEN not configured"})
+    qs = event.get("queryStringParameters") or {}
+    job_id = (qs.get("id") or "").strip().lower()
+    if not _JOB_ID.match(job_id):
+        return _resp(400, {"error": "id must be a 32-hex job id"})
+    # the trailing slash is load-bearing: without it job id "ab…" could sweep
+    # a sibling prefix that merely starts with the same characters
+    deleted = _delete_prefix(ARTIFACTS_BUCKET, f"03_outputs/{job_id}/")
+    deleted += _delete_prefix(ARTIFACTS_BUCKET, f"audio/{job_id}/")
+    if UPLOADS_BUCKET:
+        deleted += _delete_prefix(UPLOADS_BUCKET, f"01_inputs/uploads/{job_id}/")
+    if not deleted:
+        return _resp(404, {"error": "no such job", "job_id": job_id})
+    print(f"[jobs] hard-deleted job {job_id}: {deleted} objects")
+    return _resp(200, {"job_id": job_id, "deleted": deleted})
+
+
 def handler(event, _ctx=None):
     method = ((event.get("requestContext") or {}).get("http") or {}).get("method", "GET")
     if method == "OPTIONS":               # CORS preflight
         return _resp(204, {})
     if not _access_ok(event):
         return _resp(403, {"error": "uploaded swings are private — sign in on the portal"})
+    if method == "DELETE":
+        return _delete_job(event)
     names = _upload_names()
     jobs = [{**j, "name": names.get(j["job_id"], f"swing {j['job_id'][:8]}")}
             for j in _list_jobs()]
