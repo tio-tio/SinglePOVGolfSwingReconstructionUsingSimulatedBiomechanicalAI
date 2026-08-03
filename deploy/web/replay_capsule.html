@@ -86,6 +86,10 @@ class Capsule2D {
       r=Math.max(r, Math.hypot(dx,dy,dz)); }
     this.radius=r;
     this.frame=0; this.playing=true; this.yaw=0.5; this.pitch=0.06; this._last=0; this._acc=0;
+    // club: schematic two-pole placeholder (both wrists -> estimated clubhead),
+    // muted + thin. DELIBERATE: we do not track the club (clubhead is a forearm
+    // extrapolation, web_artifacts.py) — an honest schematic, not tracked geometry.
+    // TODO(v2-club-tracking): faithful club once measured (DEPLOYMENT_PLAN.md).
     this.clubBones = this.bones.filter(b => b.a===17 || b.b===17);
   }
   _project(p) {
@@ -143,7 +147,7 @@ class Capsule2D {
       items.push({z, fn:()=>{ ctx.fillStyle=this._shade(z); ctx.beginPath();
         ctx.arc(pr[0],pr[1], JOINT_R[j]*pr[4]*pr[2],0,7); ctx.fill(); }}); }
     for (const b of this.clubBones){ const pa=P[b.a], pb=P[b.b]; const z=(pa[3]+pb[3])/2;
-      items.push({z, fn:()=>this._capsule(pa,pb, 0.012*pa[4]*pa[2], 0.014*pb[4]*pb[2], "#3a4048")}); }
+      items.push({z, fn:()=>this._capsule(pa,pb, 0.007*pa[4]*pa[2], 0.009*pb[4]*pb[2], "#8e9089")}); }
     items.sort((a,b)=>b.z-a.z);   // far first
     for (const it of items) it.fn();
 

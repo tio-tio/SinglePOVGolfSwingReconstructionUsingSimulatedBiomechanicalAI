@@ -28,9 +28,15 @@ COPY Scripts/coaching_chat.py               ${LAMBDA_TASK_ROOT}/Scripts/coaching
 COPY Scripts/coaching_llm_summary_v2.py     ${LAMBDA_TASK_ROOT}/Scripts/coaching_llm_summary_v2.py
 COPY Scripts/coaching_persona.py            ${LAMBDA_TASK_ROOT}/Scripts/coaching_persona.py
 COPY Scripts/ball_flight.py                 ${LAMBDA_TASK_ROOT}/Scripts/ball_flight.py
+# chat v2 sessions: clustering + rollups + the evaluated delta comparator
+COPY Scripts/session_meta.py                ${LAMBDA_TASK_ROOT}/Scripts/session_meta.py
+COPY Scripts/coaching_sessions.py           ${LAMBDA_TASK_ROOT}/Scripts/coaching_sessions.py
+COPY Scripts/coaching_progress.py           ${LAMBDA_TASK_ROOT}/Scripts/coaching_progress.py
 
 # KB (indicator glossary/explainer cards) — loaded relative to the v2 module.
 COPY Data/coaching/indicator_kb.json        ${LAMBDA_TASK_ROOT}/Data/coaching/indicator_kb.json
+# Grounded-coaching drill corpus (get_drills serves ONLY these cards)
+COPY Data/coaching/drill_cards.json         ${LAMBDA_TASK_ROOT}/Data/coaching/drill_cards.json
 # Coaching personas — coaching_chat.load_persona() reads these by name at
 # runtime (default "traditional"); missing dir raises PersonaLoadError.
 COPY Data/coaching/personas/                ${LAMBDA_TASK_ROOT}/Data/coaching/personas/

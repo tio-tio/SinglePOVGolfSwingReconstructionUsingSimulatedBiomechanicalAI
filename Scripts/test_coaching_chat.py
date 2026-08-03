@@ -141,7 +141,7 @@ check("stating the low-conf value IS caught",
       any(v["type"] == "low_confidence_leak" for v in g["violations"]), str(g["violations"]))
 
 # =========================================================================== #
-print("\n[5] Prescriptive answer is caught by the verifier")
+print("\n[5] Un-retrieved advice is caught by the verifier (chat v2 semantics)")
 ctx = ctx_single()
 backend = C.ScriptedBackend([
     use("get_indicator", {"key": "hip_lateral_shift_pct"}),
@@ -149,13 +149,13 @@ backend = C.ScriptedBackend([
 ])
 res = C.Conversation(ctx, backend).ask("What should I do about my weight shift?")
 g = C.verify_chat_grounding(ctx, res)
-check("prescriptive language is flagged",
-      any(v["type"] == "prescriptive" for v in g["violations"]), str(g["violations"]))
+check("advice without a get_drills card is flagged",
+      any(v["type"] == "ungrounded_prescription" for v in g["violations"]), str(g["violations"]))
 # but a REFUSAL that merely names fix-words must NOT be flagged prescriptive
 backend = C.ScriptedBackend([say("I can describe your swing, but I can't tell you what to work on or drill.")])
 g = C.verify_chat_grounding(ctx, C.Conversation(ctx_single(), backend).ask("what should I fix?"))
-check("refusal echoing fix-words is NOT prescriptive",
-      not any(v["type"] == "prescriptive" for v in g["violations"]), str(g["violations"]))
+check("refusal echoing fix-words is NOT flagged",
+      not any(v["type"] == "ungrounded_prescription" for v in g["violations"]), str(g["violations"]))
 # "I can't prescribe... but here's what stood out" + grounded numbers is fine (real Codex case)
 v = C._t_get_indicator(ctx_single(), {"key": "hip_lateral_shift_pct"})["value"]
 backend = C.ScriptedBackend([

@@ -50,11 +50,14 @@ SPEED_PRIOR_WEIGHT_PX = 1.5                 # pixel-equivalent cost of a 1-sigma
 BAND_DELTA_PX = 1.0                         # profile width that defines the band
 BAND_MEASURED_FRAC = 0.28                   # carry band this wide => speed is measured
 ANCHOR_JITTER = 0.10                        # depth-anchor (golfer height / focal) prior
-MAX_FIT_RESIDUAL_PX = 6.0                   # above this the "track" is not a ball flight
+# Real ball tracks on the validation clips reproject at 2.5-3.2 px; the best
+# chain the negative clip can offer sits at 5.6. 4.5 separates them with room.
+MAX_FIT_RESIDUAL_PX = 4.5
 MAX_CANDIDATES = 10                         # tracks re-ranked by ballistic fit
 PREFIX_HEAD_PTS = 10                        # vetted head the flight is anchored on
 PREFIX_GROW_TOL_PX = 7.0                    # how far a later point may stray
 MAX_LAUNCH_DT_S = 0.12                      # flight must start at impact
+LENGTH_RESID_TRADE = 1.5                    # track points worth one px of residual
 
 
 # --------------------------------------------------------------------------
@@ -469,7 +472,18 @@ class FlightFitter:
         cp, sp = math.cos(pitch), math.sin(pitch)
         Zc2 = Zc * cp - Yc * sp
         Yc2 = Zc * sp + Yc * cp
+        self._last_level = np.stack([Xc, Yc, Zc], axis=1)   # tee-relative, level
         return np.stack([Xc, Yc2, Zc2], axis=1) + self.T, tt, r
+
+    def level_pts(self, speed, launch, azim, n_traj=48):
+        """Flight relative to the tee in a LEVEL frame (x right, y DOWN, z
+        downrange), i.e. before the camera-pitch rotation.
+
+        The 3D replay is a leveled frame, so handing it camera-frame points made
+        the arc inherit the camera's tilt — on a 6.8 deg downward tilt the ball
+        "landed" 21 m below the tee."""
+        _, tt, _ = self._cam_pts(speed, launch, azim, n_traj=n_traj)
+        return self._last_level, tt
 
     def _project(self, speed, launch, azim, dt=0.0, f_px=None, fast=False):
         """fast=True simulates only as far as the observed track reaches — the
@@ -711,29 +725,64 @@ def analyze(video: str | Path, landmarks_csv: str | Path,
     # Re-rank the 2D shortlist by ballistic fit: the clubhead leaves the same
     # origin at the same instant as the ball and looks just as track-like in 2D,
     # but it cannot be reprojected as a flight (L3/L4).
+    # Score each chain at full length AND trimmed. Trimming rescues a real track
+    # that the predictive extension ran past (IMG_3434), but a head-anchored fit
+    # is short-baseline and mispredicts the far end, so it would also throw away
+    # good late points on a clean track (IMG_8107 fits all 15 of its points at
+    # 2.0 px). Offering both and letting the gate + length ranking choose avoids
+    # having to get that call right up front.
     ranked = []
     for cand in pool:
         if len(cand) < PARTIAL_MIN_PTS:
             continue
-        cand = trim_tail(cand)
-        cf = make_fitter(cand)
-        cv_, _ = cf.fit_constrained(env_speed)
-        ranked.append((cf.pixel_loss(cv_), cand))
+        variants = [cand]
+        trimmed = trim_tail(cand)
+        if PARTIAL_MIN_PTS <= len(trimmed) < len(cand):
+            variants.append(trimmed)
+        for var in variants:
+            cf = make_fitter(var)
+            cv_, _ = cf.fit_constrained(env_speed)
+            resid = cf.pixel_loss(cv_)
+            # The physical gates decide which chains are ball flights AT ALL, so
+            # they belong here rather than only on the winner: otherwise a long
+            # clutter chain that happens to squeak under the residual bar wins
+            # the ranking and takes the whole clip down with it.
+            valid = resid <= MAX_FIT_RESIDUAL_PX and abs(cv_[3]) <= MAX_LAUNCH_DT_S
+            ranked.append((valid, resid, var, cand))
     if debug:
-        for resid, cand in sorted(ranked, key=lambda rr: rr[0]):
-            print(f"  [rank] n={len(cand):2d} f{cand[0][0]}..{cand[-1][0]} "
-                  f"resid={resid:7.2f}")
-    # Among flights that actually fit, prefer the one the most frames support.
-    # Ranking on mean residual alone rewards whittling a chain down to a handful
-    # of points, which is how a 10-point clutter fragment beat the real 16-point
-    # ball track on IMG_3434.
-    good = [r for r in ranked if r[0] <= MAX_FIT_RESIDUAL_PX]
+        for valid, resid, cand, _ in sorted(ranked, key=lambda rr: rr[1]):
+            print(f"  [rank] {'ok ' if valid else '   '} n={len(cand):2d} "
+                  f"f{cand[0][0]}..{cand[-1][0]} resid={resid:7.2f}")
+    # Among valid flights, trade track length against fit quality: more frames
+    # condition the fit better, but not at any price in reprojection error.
+    good = [r for r in ranked if r[0]]
+    parent = None
     if good:
-        track = max(good, key=lambda r: (len(r[1]), -r[0]))[1]
+        _, _, track, parent = max(good, key=lambda r: len(r[2]) - LENGTH_RESID_TRADE * r[1])
     elif ranked:
-        track = min(ranked, key=lambda r: r[0])[1]
+        track = min(ranked, key=lambda r: r[1])[2]
     else:
         track = t["track"] or t_eq["track"]
+
+    # Reclaim tail points the (deliberately conservative, short-baseline) trim
+    # dropped: the winning fit is well conditioned, so re-test the parent chain's
+    # remaining points against IT. More points tighten the confidence band.
+    if parent is not None and len(parent) > len(track):
+        fw = make_fitter(track)
+        vw, _ = fw.fit_constrained(env_speed)
+        fp = make_fitter(parent)
+        pr, _ = fp._project(vw[0], vw[1], vw[2], vw[3])
+        errs = np.linalg.norm(pr - fp.obs, axis=1)
+        k = len(track)
+        while k < len(parent) and errs[k] <= PREFIX_GROW_TOL_PX:
+            k += 1
+        if k > len(track):
+            grown = parent[:k]
+            fg = make_fitter(grown)
+            vg, _ = fg.fit_constrained(env_speed)
+            if (fg.pixel_loss(vg) <= MAX_FIT_RESIDUAL_PX
+                    and abs(vg[3]) <= MAX_LAUNCH_DT_S):
+                track = grown
     n = len(track)
 
     result: dict = {
@@ -813,12 +862,11 @@ def analyze(video: str | Path, landmarks_csv: str | Path,
                          spin, 0.0, 0.0, trajectory_points=48)
     result["trajectory_world"] = [[round(a, 1), round(b, 1), round(c, 1)]
                                   for a, b, c in rr["trajectory"]]
-    cam, tt, _ = fitter._cam_pts(result["fit"]["ball_speed_mph"],
-                                 result["fit"]["launch_deg"],
-                                 result["fit"]["azimuth_deg"], n_traj=48)
-    rel = cam - fitter.T                             # meters relative to the tee
-    result["trajectory_cam_m"] = [[round(float(t), 3)] + [round(float(v), 3) for v in p]
-                                  for t, p in zip(tt, rel)]
+    lvl, tt = fitter.level_pts(result["fit"]["ball_speed_mph"],
+                               result["fit"]["launch_deg"],
+                               result["fit"]["azimuth_deg"], n_traj=48)
+    result["trajectory_tee_m"] = [[round(float(t), 3)] + [round(float(v), 3) for v in p]
+                                  for t, p in zip(tt, lvl)]
     return result
 
 

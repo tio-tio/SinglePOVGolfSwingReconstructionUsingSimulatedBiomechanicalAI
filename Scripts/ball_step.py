@@ -29,12 +29,14 @@ GOLFER_M = 1.75
 def trajectory_replay(ball: dict, replay_path: Path) -> list | None:
     """Map the camera-frame ball trajectory into the replay viewer's frame.
 
-    Replay and camera share the h36m-camera axis convention (x right, y DOWN,
-    z depth); the replay is additionally leveled by <=20 deg — small enough to
-    skip for the ball arc (v1). Anchor: mid-ankle at impact sits at the tee;
+    The replay is a LEVELED frame, so the arc must be level too: ball_track
+    emits `trajectory_tee_m` (x right, y DOWN, z downrange, tee at origin) with
+    the camera pitch already removed. Feeding it camera-frame points instead
+    tilted the whole arc — on IMG_3434's 6.8 deg downward camera the ball
+    "landed" ~21 m below the tee. Anchor: mid-ankle at impact sits at the tee;
     scale: golfer standing height in replay units / GOLFER_M.
     """
-    cam = ball.get("trajectory_cam_m")
+    cam = ball.get("trajectory_tee_m") or ball.get("trajectory_cam_m")
     if not cam:
         return None
     replay = json.loads(replay_path.read_text())

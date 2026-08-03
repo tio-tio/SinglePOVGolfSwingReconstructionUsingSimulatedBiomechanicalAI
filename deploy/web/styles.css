@@ -101,6 +101,22 @@ a.brand:hover .brand-name { text-decoration: underline; }
 .analyze-steps li.doing, .analyze-steps li.done { opacity: 1; }
 .analyze-steps strong { display: block; font-size: 15px; }
 .analyze-steps span:not(.check) { font-size: 13px; color: var(--muted); }
+
+/* live cloud processing (.analyze-live, set by startCloudAnalyzeUI): sample
+   3D swing loop + one advancing step line replace the 7-item checklist.
+   The <ol> stays in the DOM (visually hidden below) for screen readers and
+   as the single source of the step copy. Demo clips keep the classic list. */
+.analyze-preview-wrap { display: none; }
+.analyze-live .analyze-preview-wrap { display: block; margin: 4px 0 2px; }
+#analyze-preview { display: block; width: 100%; height: 300px; border-radius: 12px;
+  background: #0f2019; opacity: .85; }        /* ghosted, recedes behind the copy */
+.analyze-preview-caption { margin: 8px 0 0; text-align: center; font-size: 13px;
+  color: var(--muted); }
+#analyze-step-line { min-height: 22px; margin: 14px 0 0; font-size: 15px;
+  font-weight: 600; color: var(--green); opacity: 0; transition: opacity .5s ease; }
+#analyze-step-line.show { opacity: 1; }
+.analyze-live .analyze-steps { position: absolute; width: 1px; height: 1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .check {
   flex: 0 0 auto; width: 22px; height: 22px; margin-top: 2px; border-radius: 50%;
   border: 2px solid #dfe1dc; position: relative; transition: all .25s;
@@ -306,10 +322,23 @@ li.done .check::after {
 .dash-eyebrow { margin: 0; font-size: 13px; color: var(--muted); }
 .dash-title { margin: 2px 0 14px; font-size: 20px; }
 .dash-swings { display: flex; flex-direction: column; gap: 8px; }
-.dash-swing { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+/* fixed column tracks so date / status / actions line up across rows
+   (flex space-between let every row space its own cells independently) */
+.dash-swing { display: grid; align-items: center; gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 80px 112px 106px 32px 32px;
   padding: 10px 14px; border: 1px solid #eceee9; border-radius: 10px; }
 .dash-swing-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
+.dash-swing .dash-swing-date { grid-column: 2; }
+.dash-swing .upload-badge { grid-column: 3; justify-self: start; }
+.dash-swing .lib-open { grid-column: 4; justify-self: start; }
+.dash-swing .lib-rename { grid-column: 5; }
+.dash-swing .lib-remove { grid-column: 6; }
+@media (max-width: 640px) {
+  /* phones: name gets its own line; meta wraps naturally below */
+  .dash-swing { display: flex; flex-wrap: wrap; }
+  .dash-swing-name { flex: 1 1 100%; }
+}
 
 /* ========================= prototype banner ========================== */
 .banner { margin: 4px 0 18px; padding: 12px 16px; border-radius: 12px; font-size: 14px;

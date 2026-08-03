@@ -37,11 +37,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 import coaching_llm_summary_v2 as v2  # KB loader + KB block builder (no clip numbers)
 from coaching_persona import DEFAULT_PERSONA, load_persona #Loads the narration persona
 import ball_flight as BF  # physics ball-flight sim (McNally CVPR'23W baseline)
+import coaching_sessions as CS  # session rollups + delta_truth reshaping (chat v2)
+from session_meta import cluster_sessions
 
 KB_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_kb.json"
 CONF_PATH = PROJECT_ROOT / "Data" / "coaching" / "indicator_confidence.json"
+DRILLS_PATH = PROJECT_ROOT / "Data" / "coaching" / "drill_cards.json"
 DEFAULT_MODEL = "claude-opus-4-8"
-MAX_TOOL_ITERS = 6  # hard cap on tool round-trips per user turn (cost + loop guard)
+# hard cap on tool round-trips per user turn (cost + loop guard). 8 (was 6):
+# session questions legitimately chain list_sessions -> load/compare -> details.
+MAX_TOOL_ITERS = int(os.environ.get("CHAT_MAX_TOOL_ITERS", "8"))
+# artifact fetches one turn may trigger (library browsing) — bounds wall clock
+# inside the API Gateway 29 s window even on a cold /tmp cache
+FETCH_BUDGET = 12
 
 # --------------------------------------------------------------------------- #
 # SwingContext — the ONLY thing tools can read (grounding boundary)
@@ -69,10 +77,18 @@ class SwingContext:
     conf: dict = field(default_factory=_load_confidence)
     a_label: str = "this swing"
     b_label: str = "the earlier swing"
+    # --- chat v2 library browsing (uploaded jobs only; None on demo clips) ---
+    library: list[dict] | None = None   # /jobs listing (+ inlined job_meta fields)
+    current_id: str | None = None       # the active swing's job id in `library`
+    fetcher: Any = None                 # fn(job_id) -> {"scorecard","ball","meta","diag"}|None
+    saver: Any = None                   # fn(job_id, fields) -> merged meta | None
+    loaded: dict = field(default_factory=dict)   # job_id -> scorecard (via load_swing)
+    bundles: dict = field(default_factory=dict)  # job_id -> full fetcher bundle
+    fetches: int = 0                    # per-request artifact-fetch budget used
 
     @classmethod
     def from_files(cls, a_path: str | Path, b_path: str | Path | None = None,
-                   ball_path: str | Path | None = None) -> "SwingContext":
+                   ball_path: str | Path | None = None, **kw) -> "SwingContext":
         a = json.loads(Path(a_path).read_text(encoding="utf-8"))
         b = json.loads(Path(b_path).read_text(encoding="utf-8")) if b_path else None
         ball = None
@@ -81,29 +97,71 @@ class SwingContext:
                 ball = json.loads(Path(ball_path).read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 ball = None
-        return cls(a=a, kb=v2.load_kb(), b=b, ball=ball)
+        return cls(a=a, kb=v2.load_kb(), b=b, ball=ball, **kw)
+
+    # -- scorecard resolution -------------------------------------------------
+    def _sc(self, which: str = "a") -> dict | None:
+        """'a' / 'b' / a job id (current or previously load_swing-ed)."""
+        if which == "a" or which == self.current_id:
+            return self.a
+        if which == "b":
+            return self.b
+        return self.loaded.get(which)
+
+    def fetch_swing(self, swing_id: str) -> dict | None:
+        """Scorecard for a library swing, via the injected fetcher (cached).
+        Returns None when unknown/unfetchable/over budget."""
+        if swing_id == self.current_id:
+            return self.a
+        if swing_id in self.loaded:
+            return self.loaded[swing_id]
+        if self.fetcher is None or self.fetches >= FETCH_BUDGET:
+            return None
+        self.fetches += 1
+        bundle = self.fetcher(swing_id) or {}
+        sc = bundle.get("scorecard")
+        if sc:
+            self.loaded[swing_id] = sc
+            self.bundles[swing_id] = bundle
+        return sc
+
+    def bundle_for(self, swing_id: str) -> dict:
+        """Full artifact bundle (meta/ball/diag) for the current or a loaded
+        swing — fetches on demand for the current swing."""
+        if swing_id in self.bundles:
+            return self.bundles[swing_id]
+        if swing_id == self.current_id and self.fetcher is not None \
+                and self.fetches < FETCH_BUDGET:
+            self.fetches += 1
+            self.bundles[swing_id] = self.fetcher(swing_id) or {}
+            return self.bundles[swing_id]
+        return {}
+
+    def library_entry(self, swing_id: str) -> dict | None:
+        for j in self.library or []:
+            if j.get("job_id") == swing_id:
+                return j
+        return None
 
     # -- per-indicator helpers ------------------------------------------------
     def has(self, key: str, which: str = "a") -> bool:
-        sc = self.b if which == "b" else self.a
+        sc = self._sc(which)
         return bool(sc) and key in sc.get("indicators", {})
 
     def confidence_tier(self, key: str, which: str = "a") -> str:
-        sc = self.b if which == "b" else self.a
-        ind = (sc or {}).get("indicators", {}).get(key, {})
+        ind = (self._sc(which) or {}).get("indicators", {}).get(key, {})
         if ind.get("confidence_tier"):
             return ind["confidence_tier"]
         return self.conf.get(key, {}).get("tier", "med")
 
     def in_range(self, key: str, which: str = "a") -> bool:
-        sc = self.b if which == "b" else self.a
-        v = sc["indicators"][key]
+        v = self._sc(which)["indicators"][key]
         lo, hi = v["pro_band"]
         return lo <= v["value"] <= hi
 
     def indicator_view(self, key: str, which: str = "a") -> dict:
         """Structured, grounded read of one indicator + its KB card."""
-        sc = self.b if which == "b" else self.a
+        sc = self._sc(which)
         v = sc["indicators"][key]
         card = self.kb.get("indicators", {}).get(key, {})
         tier = self.confidence_tier(key, which)
@@ -148,12 +206,27 @@ def _t_list_indicators(ctx: SwingContext, _inp: dict) -> dict:
 
 def _t_get_indicator(ctx: SwingContext, inp: dict) -> dict:
     key = (inp or {}).get("key", "")
-    if not ctx.has(key):
+    which = "a"
+    swing_id = (inp or {}).get("swing_id")
+    if swing_id and swing_id != ctx.current_id:
+        if ctx.fetch_swing(swing_id) is None:
+            return {"measured": False, "key": key, "swing_id": swing_id,
+                    "note": "That swing isn't loaded — call load_swing first (or check "
+                            "list_sessions for valid swing ids)."}
+        which = swing_id
+    if not ctx.has(key, which):
         return {"measured": False, "key": key,
                 "note": "This metric is not measured for this swing. Do not guess a value."}
-    view = ctx.indicator_view(key)
+    view = ctx.indicator_view(key, which)
     view["measured"] = True
-    if not view["reliable"]:
+    if which != "a":
+        view["swing_id"] = swing_id
+    _mark_low_conf(view)
+    return view
+
+
+def _mark_low_conf(view: dict) -> dict:
+    if not view.get("reliable"):
         view["note"] = ("This metric is LOW CONFIDENCE from a single camera. Do not state its "
                         "value or judge it; tell the golfer it isn't reliable enough to assess.")
     return view
@@ -237,6 +310,8 @@ def _t_estimate_ball_flight(ctx: SwingContext, inp: dict) -> dict:
             if is_name else "amateur"
     overrides = {k: inp[k] for k in ("ball_speed_mph", "launch_angle_deg",
                                      "backspin_rpm", "sidespin_rpm") if k in inp}
+    conditions = {k: inp[k] for k in ("temp_c", "humidity_pct", "elevation_m",
+                                      "wind_mph", "wind_dir_deg") if k in inp}
 
     # swing-aware nudge: THIS swing's measured hand speed vs the GolfDB pro
     # median scales the assumed ball speed (capped ±12% inside estimate_for_club).
@@ -247,7 +322,8 @@ def _t_estimate_ball_flight(ctx: SwingContext, inp: dict) -> dict:
     if hs and isinstance(hs.get("value"), (int, float)) and hs.get("pro_median"):
         speed_scale = float(hs["value"]) / float(hs["pro_median"])
 
-    res = BF.estimate_for_club(club, tier, overrides, speed_scale=speed_scale)
+    res = BF.estimate_for_club(club, tier, overrides, speed_scale=speed_scale,
+                               conditions=conditions or None)
     if res.get("estimated") and speed_scale != 1.0 and \
             "ball_speed_mph" not in res["assumed_launch"]["overridden_by_golfer"]:
         pct = round((min(max(speed_scale, 0.88), 1.12) - 1.0) * 100)
@@ -284,12 +360,15 @@ def _t_get_ball_flight(ctx: SwingContext, inp: dict) -> dict:
             "n_track_points": ball.get("n_track_points"),
             "direction_note": ball.get("azimuth_note"),
         }
+        # The range goes to the model on BOTH tiers: a single-camera fit pins the
+        # flight's shape much better than its scale, and the verifier only lets
+        # the model quote numbers the tool actually returned.
+        ci = ball.get("ci_10_90") or {}
+        if ci.get("carry_yd"):
+            res["carry_range_yd"] = [round(ci["carry_yd"][0]), round(ci["carry_yd"][1])]
+        if ci.get("speed_mph"):
+            res["speed_range_mph"] = [round(ci["speed_mph"][0]), round(ci["speed_mph"][1])]
         if q == "measured":
-            ci = ball.get("ci_10_90") or {}
-            if ci.get("carry_yd"):
-                res["carry_range_yd"] = [round(ci["carry_yd"][0]), round(ci["carry_yd"][1])]
-            if ci.get("speed_mph"):
-                res["speed_range_mph"] = [round(ci["speed_mph"][0]), round(ci["speed_mph"][1])]
             res["how_to_phrase"] = (
                 "MEASURED: the ball was tracked in the video and these numbers come from a "
                 "physics fit to that track. Answer distance questions confidently - e.g. "
@@ -300,7 +379,8 @@ def _t_get_ball_flight(ctx: SwingContext, inp: dict) -> dict:
             res["how_to_phrase"] = (
                 "PARTIAL: launch direction and angle were measured from the video ball track, "
                 "but ball speed was assumed from club norms. State direction and launch "
-                "confidently; give carry as an estimate informed by the measured launch.")
+                "confidently; give carry as an estimate informed by the measured launch, and "
+                "prefer carry_range_yd over the single number if the golfer presses on distance.")
         traj = ball.get("trajectory_world")
         if traj:
             res["_ui_trajectory"] = traj
@@ -310,6 +390,285 @@ def _t_get_ball_flight(ctx: SwingContext, inp: dict) -> dict:
     res["how_to_phrase"] = ("SIMULATED: the ball was not trackable in this video; this is a "
                             "physics simulation from typical launch conditions. Always say so.")
     return res
+
+
+# ---- chat v2: library / session tools (uploaded jobs only) ---------------- #
+
+def _t_list_sessions(ctx: SwingContext, _inp: dict) -> dict:
+    """The golfer's practice sessions, newest first, from the job listing."""
+    if not ctx.library:
+        return {"available": False,
+                "note": "No swing library is available in this chat (demo clips are "
+                        "single-swing). Only the current swing can be discussed."}
+    sessions = CS.session_view(cluster_sessions(ctx.library), ctx.current_id)
+    return {"available": True, "sessions": sessions, "n_sessions": len(sessions),
+            "note": "Sessions are practice visits (uploads within ~2 hours cluster "
+                    "together). The library is the team's shared pilot library, so a "
+                    "session may contain a teammate's swings."}
+
+
+def _t_load_swing(ctx: SwingContext, inp: dict) -> dict:
+    swing_id = str((inp or {}).get("swing_id") or "")
+    sc = ctx.fetch_swing(swing_id)
+    if sc is None:
+        return {"loaded": False, "swing_id": swing_id,
+                "note": "Couldn't load that swing (unknown id, still processing, or "
+                        "this turn's load budget is used up). Check list_sessions."}
+    inds = sc.get("indicators", {})
+    reliable = [k for k in inds if (inds[k].get("confidence_tier") or "med") != "low"]
+    flagged = [f["indicator"] for f in sc.get("feedback", []) if f.get("severity") == "review"]
+    entry = ctx.library_entry(swing_id) or {}
+    return {"loaded": True, "swing_id": swing_id,
+            "name": entry.get("name"), "date": entry.get("date"),
+            **{k: entry[k] for k in ("club", "setting", "notes", "session_id") if entry.get(k)},
+            "n_indicators": len(inds), "n_reliable": len(reliable),
+            "n_flagged": len(flagged), "flagged_keys": flagged,
+            "note": "Loaded. get_indicator now accepts this swing_id; compare_swings "
+                    "can compare it against the current swing or another loaded one."}
+
+
+def _cmp_pair_scorecards(ctx: SwingContext, id_a: str, id_b: str):
+    """Resolve two swing ids -> (earlier_meta, later_meta, scA, scB) or an error dict."""
+    if not id_a or not id_b or id_a == id_b:
+        return {"compared": False, "note": "Give two different swing_ids (see list_sessions)."}
+    metas = []
+    for sid in (id_a, id_b):
+        if ctx.fetch_swing(sid) is None:
+            return {"compared": False, "swing_id": sid,
+                    "note": "Couldn't load that swing — check list_sessions for valid ids."}
+        e = ctx.library_entry(sid) or {}
+        metas.append({"swing_id": sid, "name": e.get("name"), "date": e.get("date")})
+    early, late, dated = CS.order_pair(*metas)
+    return early, late, dated
+
+
+def _t_compare_swings(ctx: SwingContext, inp: dict) -> dict:
+    inp = inp or {}
+    got = _cmp_pair_scorecards(ctx, str(inp.get("swing_id_a") or ""),
+                               str(inp.get("swing_id_b") or ""))
+    if isinstance(got, dict):
+        return got
+    early, late, dated = got
+    res = CS.compare_scorecards(ctx._sc(early["swing_id"]), ctx._sc(late["swing_id"]))
+    res["earlier_swing"] = early
+    res["later_swing"] = late
+    if not dated:
+        res["order_note"] = ("The swings' dates were missing or identical, so 'earlier' "
+                            "is just the first id given — say so if order matters.")
+    return res
+
+
+def _t_compare_sessions(ctx: SwingContext, inp: dict) -> dict:
+    inp = inp or {}
+    ids = (str(inp.get("session_id_a") or ""), str(inp.get("session_id_b") or ""))
+    if not ctx.library:
+        return {"compared": False, "note": "No swing library available in this chat."}
+    if not ids[0] or not ids[1] or ids[0] == ids[1]:
+        return {"compared": False,
+                "note": "Give two different session_ids from list_sessions."}
+    sessions = {s["session_id"]: s for s in cluster_sessions(ctx.library)}
+    sides = []
+    for sid in ids:
+        s = sessions.get(sid)
+        if s is None:
+            return {"compared": False, "session_id": sid,
+                    "note": "Unknown session_id — call list_sessions for the current ids."}
+        cards = []
+        for sw in s["swings"][:CS.MAX_ROLLUP_SWINGS]:
+            sc = ctx.fetch_swing(str(sw.get("job_id")))
+            if sc:
+                cards.append(sc)
+        if not cards:
+            return {"compared": False, "session_id": sid,
+                    "note": "None of that session's swings could be loaded."}
+        sides.append({"session_id": sid, "label": s.get("label"), "date": s.get("date"),
+                      "n_swings": s["n_swings"], "n_sampled": len(cards),
+                      "rollup": CS.session_rollup(cards)})
+    early, late, dated = CS.order_pair(*sides)
+    res = CS.compare_scorecards(early["rollup"], late["rollup"])
+    res["earlier_session"] = {k: early[k] for k in ("session_id", "label", "date", "n_swings", "n_sampled")}
+    res["later_session"] = {k: late[k] for k in ("session_id", "label", "date", "n_swings", "n_sampled")}
+    res["how_to_phrase"] += (
+        " Values are per-indicator MEDIANS across each session's sampled swings "
+        "(n_sampled, newest first) - phrase as 'your session medians', not as one "
+        "swing's numbers. Ball flight is NOT aggregated; distance questions need "
+        "load_swing + get_ball_flight on a specific swing.")
+    if not dated:
+        res["order_note"] = "Session dates were missing/identical; order is as given."
+    return res
+
+
+# ---- chat v2: context / elicitation tools (uploaded jobs only) ------------ #
+
+def _t_get_conditions(ctx: SwingContext, inp: dict) -> dict:
+    """Recorded context for a swing: session note, club, setting, and the
+    weather backfilled at upload time (when the golfer shared location)."""
+    swing_id = str((inp or {}).get("swing_id") or ctx.current_id or "")
+    if not swing_id:
+        return {"available": False, "note": "No context is recorded for demo clips."}
+    if swing_id != ctx.current_id and swing_id not in ctx.loaded:
+        if ctx.fetch_swing(swing_id) is None:
+            return {"available": False, "swing_id": swing_id,
+                    "note": "Couldn't load that swing — check list_sessions."}
+    meta = dict(ctx.bundle_for(swing_id).get("meta") or {})
+    entry = ctx.library_entry(swing_id) or {}
+    for k in ("club", "setting", "ball", "notes", "session_label", "uploaded_at"):
+        if entry.get(k) and not meta.get(k):
+            meta[k] = entry[k]
+    if not meta:
+        return {"available": False, "swing_id": swing_id,
+                "note": "Nothing recorded for this swing yet. Ask the golfer (club? "
+                        "range or course? conditions?) and store answers with save_context."}
+    out = {"available": True, "swing_id": swing_id,
+           **{k: meta[k] for k in ("uploaded_at", "session_label", "club", "setting",
+                                   "ball", "notes") if meta.get(k)}}
+    wx = meta.get("weather")
+    if isinstance(wx, dict):
+        out["weather"] = wx
+        out["weather_note"] = (
+            "Recorded automatically for the upload hour/location. wind_dir_met_deg is "
+            "the compass direction the wind blew FROM (meteorological) - you don't know "
+            "the shot direction, so ask the golfer whether it played as head/tail/cross "
+            "before feeding wind into estimate_ball_flight.")
+    missing = [k for k in ("club", "setting") if not out.get(k)]
+    if missing:
+        out["missing"] = missing
+        out["elicit_hint"] = ("If the answer would change your reply, ask ONE short "
+                              "follow-up for: " + ", ".join(missing) +
+                              " - then store it with save_context.")
+    return out
+
+
+def _t_save_context(ctx: SwingContext, inp: dict) -> dict:
+    """Persist golfer-stated context (club, setting, notes, weather they told
+    us) onto the swing's job_meta.json so future conversations know it."""
+    inp = inp or {}
+    swing_id = str(inp.get("swing_id") or ctx.current_id or "")
+    if ctx.saver is None or not swing_id:
+        return {"saved": False, "note": "Context can't be saved in this chat."}
+    fields = {k: inp[k] for k in ("club", "setting", "ball", "notes", "session_label")
+              if isinstance(inp.get(k), str) and inp[k].strip()}
+    if not fields:
+        return {"saved": False,
+                "note": "Nothing to save — pass club/setting/ball/notes/session_label."}
+    merged = ctx.saver(swing_id, fields)
+    if merged is None:
+        return {"saved": False, "swing_id": swing_id,
+                "note": "Saving failed (endpoint unavailable). Answer normally; the "
+                        "golfer's statement still applies for THIS conversation."}
+    # keep this conversation's view coherent with what was just saved
+    if swing_id in ctx.bundles:
+        ctx.bundles[swing_id]["meta"] = merged
+    entry = ctx.library_entry(swing_id)
+    if entry is not None:
+        entry.update({k: v for k, v in fields.items()})
+    return {"saved": True, "swing_id": swing_id, "stored": fields,
+            "note": "Saved — future conversations about this swing will know this."}
+
+
+def _t_get_capture_quality(ctx: SwingContext, inp: dict) -> dict:
+    """Pose-tracking quality diagnostics for a swing's video + filming guidance.
+    This is about the VIDEO, not the golf swing."""
+    swing_id = str((inp or {}).get("swing_id") or ctx.current_id or "")
+    diag = ctx.bundle_for(swing_id).get("diag") if swing_id else None
+    if not isinstance(diag, dict):
+        return {"available": False,
+                "note": "No capture diagnostics for this swing (older upload or demo clip)."}
+    swaps = diag.get("swaps", {})
+    conf = diag.get("conf", {})
+    total_swaps = sum(int(s.get("n_swaps") or 0) for s in swaps.values()
+                      if isinstance(s, dict))
+    worst = max(((k, float(s.get("swaps_per_100f") or 0)) for k, s in swaps.items()
+                 if isinstance(s, dict)), key=lambda kv: kv[1], default=(None, 0.0))
+    repaired = diag.get("repair", {}).get("n_swaps_repaired", {})
+    out = {
+        "available": True, "swing_id": swing_id,
+        "n_frames": diag.get("n_frames"),
+        "left_right_swaps": total_swaps,
+        "worst_joint": worst[0], "worst_swaps_per_100_frames": round(worst[1], 1),
+        "n_swaps_repaired": sum(int(v or 0) for v in repaired.values()) if repaired else 0,
+        "wrist_confidence_mean": round((float(conf.get("left_wrist_mean") or 0) +
+                                        float(conf.get("right_wrist_mean") or 0)) / 2, 2)
+        if conf else None,
+        "why_it_matters": ("Left/right swaps and low landmark confidence are what push "
+                           "metrics into the low-confidence tier."),
+        "filming_guidance": ("Cleanest captures: phone at waist height on a tripod, "
+                             "down-the-line or face-on, the whole body in frame, good "
+                             "light, 60 fps if available, no other people in shot. This "
+                             "is guidance about FILMING, not about the golf swing."),
+    }
+    return out
+
+
+# ---- chat v2: grounded posture coaching (advice = retrieved, not generated) #
+
+_DRILLS_CACHE: dict = {"loaded": False, "cards": []}
+
+
+def load_drills() -> list[dict]:
+    if not _DRILLS_CACHE["loaded"]:
+        _DRILLS_CACHE["loaded"] = True
+        try:
+            _DRILLS_CACHE["cards"] = json.loads(
+                DRILLS_PATH.read_text(encoding="utf-8")).get("cards", [])
+        except (OSError, json.JSONDecodeError):
+            _DRILLS_CACHE["cards"] = []
+    return _DRILLS_CACHE["cards"]
+
+
+def _t_get_drills(ctx: SwingContext, inp: dict) -> dict:
+    """Drill cards for CURRENTLY-FLAGGED, reliable indicators only. The model
+    may only prescribe what this returns — the verifier enforces it."""
+    key = (inp or {}).get("indicator_key") or None
+    flags = {f["indicator"]: f for f in ctx.a.get("feedback", [])
+             if f.get("severity") == "review"}
+    if key and key not in flags:
+        tier = ctx.confidence_tier(key) if ctx.has(key) else None
+        why = ("its measurement is low-confidence from a single camera"
+               if tier == "low" else
+               "it measured inside the typical tour range" if ctx.has(key) else
+               "it isn't measured for this swing")
+        return {"available": False, "indicator_key": key,
+                "note": f"No drill for that: {why}. Only metrics currently flagged "
+                        f"out of range get practice suggestions — say so plainly."}
+    if key:
+        targets = [flags[key]]
+    else:
+        if not flags:
+            return {"available": False,
+                    "note": "Nothing is flagged out of range on this swing, so there is "
+                            "nothing to prescribe. Tell the golfer what measured well "
+                            "instead - do not invent something to work on."}
+        # worst first: furthest percentile from the middle
+        targets = sorted(flags.values(),
+                         key=lambda f: abs(50 - (f.get("percentile") or 50)),
+                         reverse=True)[:2]
+    cards, missing = [], []
+    for f in targets:
+        direction = "below" if (f.get("percentile") or 50) <= 50 else "above"
+        matched = [c for c in load_drills()
+                   if c["indicator_key"] == f["indicator"] and c["direction"] == direction]
+        if matched:
+            for c in matched:
+                cards.append({**c, "flag_percentile": f.get("percentile"),
+                              "flag_message": f.get("message")})
+        else:
+            missing.append(f["indicator"])
+    if not cards:
+        return {"available": False, "missing_cards_for": missing,
+                "note": "Flagged, but no reviewed drill exists for that pattern yet — "
+                        "describe the observation without prescribing."}
+    return {
+        "available": True, "drills": cards,
+        "for_indicators": [c["indicator_key"] for c in cards],
+        **({"missing_cards_for": missing} if missing else {}),
+        "how_to_phrase": (
+            "Relay ONLY these drills, by their title, tied to the flagged measurement "
+            "they address (one drill is usually plenty - lead with the worst flag). "
+            "Keep the golfer's numbers from get_indicator alongside. Mention "
+            "what_should_change so progress is checkable next session. Never add "
+            "drills, fixes, or technical positions beyond these cards."),
+    }
 
 
 # (name -> (json-schema, fn)). Schemas are the model-facing tool contract.
@@ -326,7 +685,11 @@ TOOLS: dict[str, tuple[dict, ToolFn]] = {
                        "This is your only source of a metric's number — never state a value you "
                        "did not get from here.",
         "input_schema": {"type": "object",
-                         "properties": {"key": {"type": "string", "description": "indicator key, e.g. tempo_ratio"}},
+                         "properties": {"key": {"type": "string", "description": "indicator key, e.g. tempo_ratio"},
+                                        "swing_id": {"type": "string",
+                                                     "description": "optional: read the metric from a "
+                                                                    "load_swing-ed library swing instead "
+                                                                    "of the current one"}},
                          "required": ["key"], "additionalProperties": False},
     }, _t_get_indicator),
     "get_flagged_observations": ({
@@ -386,16 +749,116 @@ TOOLS: dict[str, tuple[dict, ToolFn]] = {
             "backspin_rpm": {"type": "number", "description": "golfer-stated override"},
             "sidespin_rpm": {"type": "number",
                              "description": "golfer-stated override; >0 fade, <0 draw"},
+            "temp_c": {"type": "number",
+                       "description": "playing conditions: air temperature in Celsius "
+                                      "(golfer-stated or from recorded weather)"},
+            "humidity_pct": {"type": "number", "description": "relative humidity 0-100"},
+            "elevation_m": {"type": "number",
+                            "description": "course elevation above sea level, metres"},
+            "wind_mph": {"type": "number", "description": "wind speed in mph"},
+            "wind_dir_deg": {"type": "number",
+                             "description": "direction the wind blows TOWARD: 0 = tailwind "
+                                            "(helping), 180 = headwind, 90 = left-to-right"},
         }, "additionalProperties": False},
     }, _t_estimate_ball_flight),
+    "list_sessions": ({
+        "description": "List the golfer's practice SESSIONS (uploads grouped into visits, "
+                       "newest first) with each session's swings, dates, and any notes. Call "
+                       "this FIRST for any question about past swings, other days, progress "
+                       "over time, or 'my session on Tuesday'. Resolve the golfer's wording "
+                       "(dates, 'last time', a label) against these sessions yourself; ask ONE "
+                       "short clarifying question only if it stays ambiguous.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    }, _t_list_sessions),
+    "load_swing": ({
+        "description": "Load one library swing (by swing_id from list_sessions) so its metrics "
+                       "can be read and compared. Returns its summary (flags, club, notes, date).",
+        "input_schema": {"type": "object",
+                         "properties": {"swing_id": {"type": "string"}},
+                         "required": ["swing_id"], "additionalProperties": False},
+    }, _t_load_swing),
+    "compare_swings": ({
+        "description": "Compare TWO library swings metric-by-metric (any two swing_ids from "
+                       "list_sessions; the current swing's id works too). Orders them by date "
+                       "itself and returns per-indicator change relative to the tour band "
+                       "(improved = moved toward it) — narrate change_vs_tour, never re-derive.",
+        "input_schema": {"type": "object",
+                         "properties": {"swing_id_a": {"type": "string"},
+                                        "swing_id_b": {"type": "string"}},
+                         "required": ["swing_id_a", "swing_id_b"], "additionalProperties": False},
+    }, _t_compare_swings),
+    "compare_sessions": ({
+        "description": "Compare TWO whole practice sessions (session_ids from list_sessions). "
+                       "Each side is the per-indicator MEDIAN across that session's swings; "
+                       "change is relative to the tour band, already computed. Use for 'was "
+                       "Tuesday better than Thursday', 'am I improving', session recaps.",
+        "input_schema": {"type": "object",
+                         "properties": {"session_id_a": {"type": "string"},
+                                        "session_id_b": {"type": "string"}},
+                         "required": ["session_id_a", "session_id_b"], "additionalProperties": False},
+    }, _t_compare_sessions),
+    "get_drills": ({
+        "description": "Practice drills for what's ACTUALLY flagged on this swing. Call when "
+                       "the golfer asks how to improve, what to work on, or how to fix "
+                       "something. Returns reviewed drill cards ONLY for metrics currently "
+                       "measured out of the tour range (reliable ones) — if it returns none, "
+                       "there is nothing to prescribe and you must not invent advice. Omit "
+                       "indicator_key to get drills for the worst flags.",
+        "input_schema": {"type": "object",
+                         "properties": {"indicator_key": {"type": "string",
+                                                          "description": "optional: drills for one "
+                                                                         "specific flagged metric"}},
+                         "additionalProperties": False},
+    }, _t_get_drills),
+    "get_conditions": ({
+        "description": "Recorded context for a swing: session note, club, range/course, and "
+                       "any weather captured at upload time. Call before answering questions "
+                       "that depend on conditions ('was it the wind?', cross-day fairness) or "
+                       "when the club matters. If something you need is missing, ask the "
+                       "golfer ONE short follow-up, then store the answer with save_context.",
+        "input_schema": {"type": "object",
+                         "properties": {"swing_id": {"type": "string",
+                                                     "description": "default: the current swing"}},
+                         "additionalProperties": False},
+    }, _t_get_conditions),
+    "save_context": ({
+        "description": "Store golfer-stated context on a swing so future conversations know "
+                       "it (club used, range/course/sim, ball type, a short note, a session "
+                       "name). Call this whenever the golfer tells you one of these facts. "
+                       "Never invent values — only save what the golfer actually said.",
+        "input_schema": {"type": "object", "properties": {
+            "swing_id": {"type": "string", "description": "default: the current swing"},
+            "club": {"type": "string"},
+            "setting": {"type": "string", "enum": ["range", "course", "sim"]},
+            "ball": {"type": "string", "enum": ["range", "premium"]},
+            "notes": {"type": "string", "description": "short free-text note, <=200 chars"},
+            "session_label": {"type": "string", "description": "a name for the whole session"},
+        }, "additionalProperties": False},
+    }, _t_save_context),
+    "get_capture_quality": ({
+        "description": "How well the VIDEO tracked (left/right swaps, landmark confidence, "
+                       "repairs) plus filming guidance. Use when the golfer asks why a metric "
+                       "is low-confidence, whether to trust the numbers, or how to film "
+                       "better. This is about the recording, not their golf.",
+        "input_schema": {"type": "object",
+                         "properties": {"swing_id": {"type": "string",
+                                                     "description": "default: the current swing"}},
+                         "additionalProperties": False},
+    }, _t_get_capture_quality),
 }
 
+_LIBRARY_TOOLS = ("list_sessions", "load_swing", "compare_swings", "compare_sessions",
+                  "get_conditions", "save_context", "get_capture_quality")
 
-def tool_specs(with_compare: bool) -> list[dict]:
-    """Anthropic-format tool list. `compare_indicator` only offered when a 2nd clip is loaded."""
+
+def tool_specs(with_compare: bool, with_library: bool = False) -> list[dict]:
+    """Anthropic-format tool list. `compare_indicator` only offered when a 2nd clip is
+    loaded; the session/library tools only when a job library is available."""
     names = list(TOOLS)
     if not with_compare:
         names.remove("compare_indicator")
+    if not with_library:
+        names = [n for n in names if n not in _LIBRARY_TOOLS]
     return [{"name": n, **TOOLS[n][0]} for n in names]
 
 
@@ -453,14 +916,57 @@ BALL FLIGHT (how far / where did it go, carry, height, trajectory):
   - `estimate_ball_flight` is only for what-if questions (a different club, golfer-stated
     launch numbers). Quote numbers exactly as returned; follow each result's how_to_phrase.
 
+SESSIONS & PAST SWINGS (only when the session tools are available):
+  - Questions about other days, past swings, progress, or "last session": call `list_sessions`
+    FIRST and resolve the golfer's wording (a date, "Tuesday", "last time", a label) against it
+    yourself. If two sessions could match, ask ONE short clarifying question.
+  - "Was <day A> better than <day B>?" / "am I improving?" -> `compare_sessions`. One swing vs
+    another -> `compare_swings`. A specific metric on a specific past swing -> `load_swing`, then
+    `get_indicator` with that swing_id.
+  - The comparison tools already computed improved/regressed relative to the tour band — narrate
+    `change_vs_tour`, never re-derive a verdict from raw deltas, and never call something an
+    improvement the tool didn't. Session values are medians across sampled swings; say so when
+    quoting them.
+  - The library is the team's shared pilot library — if a swing's name suggests it isn't this
+    golfer's, note that rather than presenting it as theirs. Distances stay per-swing (load the
+    swing and use its ball flight); never average carries across swings.
+
+CONTEXT & FOLLOW-UP QUESTIONS (only when the context tools are available):
+  - When an answer depends on context you don't have — the club for a flight question, the
+    conditions for "was Thursday's shorter carry the wind?", range-vs-course for a fairness
+    question — check `get_conditions` first. If it's still missing AND it would change your
+    answer, ask ONE short, specific follow-up question instead of assuming. Don't interrogate:
+    one question, then answer with what you have.
+  - When the golfer TELLS you context ("it was my 9-iron", "windy day", "that was on the
+    course"), call `save_context` so it's remembered for future conversations, then continue.
+    Save only what they said; never fabricate a value to store.
+  - Recorded weather's wind direction is the compass direction it blew FROM — you don't know
+    the shot direction, so ask whether it played as headwind/tailwind/crosswind before using
+    wind in a flight simulation.
+  - Questions about metric trustworthiness or filming ("why is that low confidence?", "how
+    should I film?") -> `get_capture_quality`. Its guidance is about the VIDEO — sharing it
+    is fine and is not swing coaching.
+
+COACHING ADVICE (how to improve, what to work on, fixes, drills):
+  - Call `get_drills`. It returns reviewed practice drills ONLY for metrics currently measured
+    outside the tour range on THIS swing. Relay a returned drill by its title with its setup /
+    movement / feel cue, tied to the measurement it addresses (fetch that number with
+    `get_indicator` so the golfer sees why). One drill is usually plenty — lead with the worst flag.
+  - If `get_drills` returns nothing, say so honestly: nothing measured out of range, so there's
+    nothing to prescribe — and point at what measured well instead. NEVER invent a drill, a fix,
+    a body position, or advice beyond what the tool returned.
+  - Mention what should change ("this drill is about bringing your hip slide down into the tour
+    range") — next session's comparison can then check whether it worked. When an earlier session
+    prescribed something (see its notes), check that metric first and say what happened.
+  - Advice is about posture and body positions we actually measure. Anything else (grip, club
+    path, equipment, strategy) stays out of scope — refuse those plainly.
+
 When to REFUSE (do not guess):
   - UNMEASURED: the question is about something not in `list_indicators` and not simulable
     (grip, which direction the ball started, club face/path, swing plane, wrist hinge,
     clubhead speed, club choice, ...). Say plainly you can't tell from what was measured.
   - LOW CONFIDENCE: `get_indicator` returns reliable=false (e.g. arm bend from one camera). Do not
     reveal or judge that value; say it isn't reliable enough to assess.
-  - FIX / ADVICE: the golfer asks what to change, fix, drill, or practice. Say you can describe the
-    swing but not prescribe fixes.
 
 Style: warm, plain, short. 1-3 sentences for most answers. Invent nothing. Use only glossary wording
 for golf terms."""
@@ -516,8 +1022,16 @@ class AnthropicBackend(Backend):
     raising truncation risk. If thinking is enabled we DO preserve the blocks."""
 
     def __init__(self, model: str = DEFAULT_MODEL, max_tokens: int = 2048,
-                 timeout: float = 40, max_retries: int = 2, thinking: bool = False):
+                 timeout: float | None = None, max_retries: int | None = None,
+                 thinking: bool = False):
         import anthropic
+        # env-tunable: the deployed Lambda sits behind API Gateway's hard 29 s
+        # window, so prod sets CHAT_LLM_TIMEOUT=18 / CHAT_LLM_RETRIES=1 there
+        # (the CLI/local default stays the roomier 40 s x 2).
+        if timeout is None:
+            timeout = float(os.environ.get("CHAT_LLM_TIMEOUT", "40"))
+        if max_retries is None:
+            max_retries = int(os.environ.get("CHAT_LLM_RETRIES", "2"))
         self.max_tokens = max_tokens
         self.thinking = thinking
         provider = os.environ.get("CHAT_BACKEND_PROVIDER", "anthropic").lower()
@@ -689,7 +1203,8 @@ class Conversation:
         self.backend = backend
         self.max_tool_iters = max_tool_iters
         self.system = build_system(ctx)
-        self.tools = tool_specs(with_compare=ctx.b is not None)
+        self.tools = tool_specs(with_compare=ctx.b is not None,
+                                with_library=ctx.library is not None)
         self.messages: list[dict] = []
 
     def ask(self, question: str) -> TurnResult:
@@ -733,6 +1248,10 @@ class Conversation:
 
 import re
 
+# Prescriptive language is legal in chat ONLY when it relays a drill card that
+# get_drills returned this turn (team decision 2026-08-01, CHAT_V2_PLAN.md §3 —
+# reverses the earlier blanket ban; advice is retrieved, never generated). The
+# blanket ban still holds on the one-shot surfaces (scorecard/explanation).
 PRESCRIPTIVE = [r"\byou should\b", r"\btry to\b", r"\bwork on\b", r"\bfocus on\b",
                 r"\bmake sure\b", r"\bto fix\b", r"\bpractice\b", r"\bdrill\b",
                 r"\byou need to\b", r"\baim to\b"]
@@ -751,13 +1270,24 @@ _REFUSAL_CUE = re.compile(
 _SMALL_INT_CUTOFF = 13
 
 
+# dates in tool results are STRINGS ("2026-07-30T09:15:00", "2026-07-30"), but a
+# model narrating them says "your July 30 session" — pool their components so
+# date-talk never reads as an invented measurement.
+_DATE_STR = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?")
+
+
 def _numbers_in(obj) -> list[float]:
-    """Recursively collect every numeric leaf in a tool-result object."""
+    """Recursively collect every numeric leaf in a tool-result object, plus the
+    components (year/month/day/hour/minute) of any ISO date inside strings."""
     out: list[float] = []
     if isinstance(obj, bool):
         return out
     if isinstance(obj, (int, float)):
         return [float(obj)]
+    if isinstance(obj, str):
+        for m in _DATE_STR.finditer(obj):
+            out += [float(g) for g in m.groups() if g is not None]
+        return out
     if isinstance(obj, dict):
         for v in obj.values():
             out += _numbers_in(v)
@@ -812,6 +1342,7 @@ def verify_chat_grounding(ctx: SwingContext, result: TurnResult) -> dict:
     fetched_lowconf: set[str] = set()
     lowconf_values: dict[str, float] = {}
     grounded_nums: set[float] = set()
+    drill_titles: list[str] = []   # titles get_drills returned THIS turn
     sim_ok = False   # a successful flight simulation legitimizes range phrasing
                      # ("above tour-typical") that narrates the tool's own notes
     for entry in result.tool_log:
@@ -826,6 +1357,25 @@ def verify_chat_grounding(ctx: SwingContext, result: TurnResult) -> dict:
             for f in r.get("flagged", []):
                 if f.get("key"):
                     fetched_ok.add(f["key"])
+        if entry["name"] == "get_drills":
+            # any get_drills result IS a band verdict: available=True asserts the
+            # flag, available=False asserts nothing (or that metric) is out of
+            # range — so range phrasing narrating it is grounded either way
+            sim_ok = True
+            for card in r.get("drills", []):
+                if card.get("title"):
+                    drill_titles.append(_norm(card["title"]).lower())
+                if card.get("indicator_key"):
+                    fetched_ok.add(card["indicator_key"])   # card carries the flag verdict
+        if entry["name"] in ("compare_swings", "compare_sessions") and r.get("compared"):
+            # each comparable row carries a tool-asserted band-relative verdict,
+            # so range/progress phrasing about those metrics is grounded
+            for row in r.get("indicators", []):
+                if row.get("comparable") and row.get("key"):
+                    fetched_ok.add(row["key"])
+        if entry["name"] == "load_swing" and r.get("loaded"):
+            for k in r.get("flagged_keys", []):
+                fetched_ok.add(k)
         if entry["name"] in ("get_indicator", "compare_indicator"):
             key = r.get("key", "")
             if r.get("reliable") is False or r.get("confidence_tier") == "low":
@@ -870,8 +1420,13 @@ def verify_chat_grounding(ctx: SwingContext, result: TurnResult) -> dict:
     if any(p in answer_l for p in _RANGE_WORDS) and not fetched_ok and not sim_ok:
         violations.append({"type": "ungrounded_range_claim"})
 
+    # prescriptive language must trace to a drill card fetched THIS turn: the
+    # answer has to name one of the returned drills. Otherwise it's invented
+    # advice — the exact failure mode the retrieved-not-generated design blocks.
     if not is_refusal and any(re.search(p, answer_l) for p in PRESCRIPTIVE):
-        violations.append({"type": "prescriptive"})
+        relayed = any(t and t in answer_l for t in drill_titles)
+        if not relayed:
+            violations.append({"type": "ungrounded_prescription"})
 
     return {"grounded": len(violations) == 0, "violations": violations,
             "fetched_reliable": sorted(fetched_ok), "fetched_low_conf": sorted(fetched_lowconf)}

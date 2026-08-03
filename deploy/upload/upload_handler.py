@@ -15,13 +15,22 @@ exposed. ALLOWED_ORIGINS / MAX_UPLOAD_MB / URL_TTL_SECONDS are env-tunable.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import os
 import re
+import sys
 import uuid
+from pathlib import Path
 
 import boto3
 from botocore.config import Config
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "Scripts"))
+try:
+    from session_meta import clean_meta  # context whitelist (chat v2 sessions)
+except ImportError:                       # zip built without Scripts/ — degrade
+    clean_meta = lambda raw: {}
 
 UPLOADS_BUCKET = os.environ["UPLOADS_BUCKET"]
 UPLOAD_PREFIX = os.environ.get("UPLOAD_PREFIX", "01_inputs/uploads")
@@ -61,13 +70,27 @@ def handler(event, _ctx=None):
     job_id = uuid.uuid4().hex
     key = f"{UPLOAD_PREFIX}/{job_id}/{safe_name}"
 
+    # session/context fields ride as object metadata on the video itself — a
+    # sidecar object under 01_inputs/uploads/ would re-trigger the processing
+    # pipeline (EventBridge fires on every Object Created). The processing
+    # Lambda reads these via head_object and publishes 03_outputs/<job>/
+    # job_meta.json. Whitelisted + length-capped in clean_meta.
+    meta = clean_meta(body.get("session") or {})
+    meta.setdefault("session_id", uuid.uuid4().hex[:12])
+    meta.setdefault("uploaded_at",
+                    _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"))
+    meta_fields = {f"x-amz-meta-mc-{k.replace('_', '-')}": v for k, v in meta.items()}
+
     try:
         presigned = _s3.generate_presigned_post(
             Bucket=UPLOADS_BUCKET, Key=key,
-            Fields={"Content-Type": content_type},
+            Fields={"Content-Type": content_type, **meta_fields},
             Conditions=[
                 {"Content-Type": content_type},
                 ["content-length-range", 1, MAX_UPLOAD_MB * 1024 * 1024],
+                # every extra field must be covered by an exact-match condition
+                # or S3 rejects the browser's POST
+                *[{k: v} for k, v in meta_fields.items()],
             ],
             ExpiresIn=URL_TTL_SECONDS,
         )
@@ -77,6 +100,7 @@ def handler(event, _ctx=None):
 
     return _resp(200, {
         "job_id": job_id,
+        "session_id": meta["session_id"],
         "object_key": key,
         "url": presigned["url"],
         "fields": presigned["fields"],

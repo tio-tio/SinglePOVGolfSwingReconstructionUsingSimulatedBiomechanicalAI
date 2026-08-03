@@ -47,9 +47,45 @@ function libSetStatus(jobId, status) {
   const it = items.find(i => i.jobId === jobId);
   if (it) { it.status = status; libSave(items); renderLibrary(); }
 }
-function libRemove(jobId) {
+/* removed-swing tombstones — same key as portal.js: the portal's team-library
+ * sync re-adds any S3 job missing from localStorage, so a bare removal here
+ * resurrects on the next portal visit. */
+const HIDDEN_KEY = "mc_library_hidden_v1";
+function hiddenAdd(jobId) {
+  let ids = [];
+  try { ids = JSON.parse(localStorage.getItem(HIDDEN_KEY)) || []; } catch (e) { /* fresh list */ }
+  ids = [jobId, ...ids.filter(id => id !== jobId)];
+  localStorage.setItem(HIDDEN_KEY, JSON.stringify(ids.slice(0, 500)));
+}
+
+/* uploaded swings live in S3 under a 32-hex job id; demo clips exist only in
+ * this browser and can't be server-deleted (mirrors portal.js) */
+const isUploadedJob = (jobId) => /^[0-9a-f]{32}$/.test(jobId);
+
+async function libRemove(jobId) {
+  const it = libLoad().find(i => i.jobId === jobId);
+  const name = (it && it.name) || "this swing";
+  if (isUploadedJob(jobId) &&
+      !confirm(`Delete "${name}" for the whole team?\n\nThis permanently removes the video and results for everyone — it can't be undone.`)) {
+    return;
+  }
+  hiddenAdd(jobId);              // instant + survives the portal's team-library sync
   libSave(libLoad().filter(i => i.jobId !== jobId));
   renderLibrary();
+  // team-wide hard delete, same call as portal.js libRemove
+  if (isUploadedJob(jobId) && window.API_BASE &&
+      window.Auth && Auth.isDev && Auth.isDev()) {
+    try {
+      const code = (document.cookie.match(/(?:^|;\s*)mc_dev=([^;]+)/) || [])[1] || "";
+      const r = await fetch(`${window.API_BASE}/jobs?id=${jobId}`, {
+        method: "DELETE",
+        headers: { "x-mc-access": decodeURIComponent(code) },
+      });
+      if (!r.ok && r.status !== 404) throw new Error("delete http " + r.status);
+    } catch (e) {
+      console.warn("server-side delete failed (swing hidden locally only):", e);
+    }
+  }
 }
 
 async function loadManifest() {
@@ -69,6 +105,8 @@ const state = {
   bundle: null,       // loaded clip bundle for the results screen
   bundlePromise: null,
   viewer: null,       // Replay3D instance
+  analyzePreview: null,  // sample-swing viewer on the analyze screen
+  analyzeYaw: null,      // yaw-drift interval for its canvas fallback
 };
 window.__MC_STATE__ = state;  // debug/diagnostics handle (console + tooling)
 
@@ -97,6 +135,7 @@ const SCREENS = { pick: "#screen-pick", analyze: "#screen-analyze", results: "#s
 const NAV_ORDER = ["pick", "analyze", "results"];
 
 function goto(screen) {
+  if (screen !== "analyze") stopAnalyzePreview();   // free the GL context on any nav away
   for (const [name, sel] of Object.entries(SCREENS)) {
     $(sel).hidden = name !== screen;
   }
@@ -253,14 +292,63 @@ function showIllustrativeFallback() {
 
 /* analyze screen paced for the REAL pipeline: steps advance slowly, the last
  * one keeps pulsing until the result opens (or the wait falls back). */
+
+/* ---- analyze-screen sample preview (canned swing loop) --------------------
+ * While the cloud pipeline runs, loop the deployed demo swing (assets/269) as
+ * a rotating clay-mannequin preview. Clearly captioned as a SAMPLE — it is
+ * NOT the user's upload being reconstructed live. Viewer selection mirrors
+ * the results screen: WebGL capsule viewer (slow auto-rotate) with the
+ * canvas skeleton as fallback (gentle yaw drift). Decorative only — any
+ * failure just leaves the plain screen. NB: the demo-clip path (runAnalyze)
+ * keeps the classic 7-item checklist; only the cloud wait goes .analyze-live. */
+function stopAnalyzePreview() {
+  if (state.analyzeYaw) { clearInterval(state.analyzeYaw); state.analyzeYaw = null; }
+  if (state.analyzePreview) {
+    if (typeof state.analyzePreview.destroy === "function") state.analyzePreview.destroy();
+    state.analyzePreview = null;
+  }
+  const panel = document.querySelector(".analyze-panel");
+  if (panel) panel.classList.remove("analyze-live");
+}
+
+async function startAnalyzePreview(seq) {
+  stopAnalyzePreview();
+  const panel = document.querySelector(".analyze-panel");
+  if (!panel || !document.getElementById("analyze-preview")) return;
+  panel.classList.add("analyze-live");
+  try {
+    const data = await fetch("assets/269/replay_3d.json").then(r => r.json());
+    if (seq !== navSeq || !panel.classList.contains("analyze-live")) return;
+    const canvas = resetCanvas("#analyze-preview");
+    const Cap = window.CapsuleViewer3D;
+    if (Cap && Cap.supported()) {
+      const v = new Cap(canvas, data, {});
+      v.controls.autoRotate = true;             // slow turntable (caller-side config)
+      v.controls.autoRotateSpeed = 0.8;
+      state.analyzePreview = v;
+    } else {
+      const ui = { scrub: document.createElement("input"),
+                   playBtn: document.createElement("button"),
+                   label: document.createElement("span") };
+      const v = new Replay3D(canvas, data, ui);
+      state.analyzePreview = v;
+      state.analyzeYaw = setInterval(() => { v.yaw += 0.004; }, 33);
+    }
+  } catch (e) { /* decorative — never block the analyze screen */ }
+}
+
 function startCloudAnalyzeUI(seq) {
   goto("analyze");
   const note = $("#analyze-cloud-note"), elapsed = $("#analyze-elapsed");
   if (note) note.hidden = false;
   const items = [...document.querySelectorAll("#analyze-steps li")];
   items.forEach(li => li.classList.remove("doing", "done"));
+  const line = $("#analyze-step-line");
+  startAnalyzePreview(seq);
   const t0 = Date.now();
   const timer = setInterval(() => {
+    // NB: no stopAnalyzePreview() here — a NEWER analyze run may own the
+    // preview by now; every real navigation away goes through goto(), which stops it.
     if (seq !== navSeq) { clearInterval(timer); if (note) note.hidden = true; return; }
     if (elapsed) {
       const s = Math.round((Date.now() - t0) / 1000);
@@ -273,12 +361,24 @@ function startCloudAnalyzeUI(seq) {
     if (i > 0) items[i - 1].classList.replace("doing", "done");
     if (i < items.length) {
       items[i].classList.add("doing");
+      if (line) {                                  // one quiet advancing line (same copy)
+        const strong = items[i].querySelector("strong");
+        const small = items[i].querySelector("div > span");  // NOT "div span": scoped
+        // selectors match against the document, so the outer panel div would
+        // make the empty .check span the first hit
+        line.classList.remove("show");
+        void line.offsetWidth;                     // restart the fade transition
+        line.textContent = (strong ? strong.textContent : "") +
+                           (small ? " — " + small.textContent : "");
+        line.classList.add("show");
+      }
       i += 1;
       if (i < items.length) setTimeout(tick, 15000);   // ~90s across 7 real steps
     }
   };
   tick();
 }
+state.debugAnalyze = () => startCloudAnalyzeUI(++navSeq);  // console/QA hook (same spirit as __MC_STATE__)
 
 /* ---- the results-screen banner doubles as the upload progress line ---- */
 function setUploadBanner(phase, jobId) {
@@ -850,13 +950,20 @@ class Replay3D {
     const fr = this.data.frames[this.frame];
     const proj = fr.map(p => this._project(p));
 
+    // club bones (either end = estimated clubhead 17) draw as a muted thin
+    // two-pole placeholder. DELIBERATE: we do not track the club — the clubhead
+    // is a forearm extrapolation (web_artifacts.py) — so this stays an honest
+    // schematic rather than implying tracking we don't have.
+    // TODO(v2-club-tracking): faithful club once measured (DEPLOYMENT_PLAN.md).
+    const isClub = (b) => b.a === 17 || b.b === 17;
+
     // bones (rainbow map from the design spec), far bones first
     const bones = [...this.data.bones].sort((p, q) =>
       Math.min(proj[p.a][2], proj[p.b][2]) - Math.min(proj[q.a][2], proj[q.b][2]));
     for (const bone of bones) {
       const a = proj[bone.a], b = proj[bone.b];
-      ctx.strokeStyle = bone.color;
-      ctx.lineWidth = 3.5 * Math.min(a[2], b[2]);
+      ctx.strokeStyle = isClub(bone) ? "#8e9089" : bone.color;
+      ctx.lineWidth = (isClub(bone) ? 2.0 : 3.5) * Math.min(a[2], b[2]);
       ctx.lineCap = "round";
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
     }
@@ -946,10 +1053,13 @@ function renderLibrary() {
       : `<span class="upload-badge">Processing<span class="pulse">…</span></span>`;
     return `<div class="dash-swing" data-job="${esc(it.jobId)}" data-ready="${ready}">
       <span class="dash-swing-name" title="${esc(it.name)}">${esc(it.name)}</span>
-      <span class="muted small">${esc(date)}</span>${badge}
+      <span class="dash-swing-date muted small">${esc(date)}</span>${badge}
       ${ready ? `<button type="button" class="btn-ghost small lib-open">Open result</button>` : ""}
-      <button type="button" class="btn-ghost small lib-remove" title="Remove from this list"
-              aria-label="Remove ${esc(it.name)} from this list">✕</button>
+      ${isUploadedJob(it.jobId)
+        ? `<button type="button" class="btn-ghost small lib-remove" title="Delete this swing for the whole team"
+              aria-label="Delete ${esc(it.name)} for the whole team">✕</button>`
+        : `<button type="button" class="btn-ghost small lib-remove" title="Remove from this list"
+              aria-label="Remove ${esc(it.name)} from this list">✕</button>`}
     </div>`;
   }).join("");
   wrap.querySelectorAll(".lib-open").forEach(b =>

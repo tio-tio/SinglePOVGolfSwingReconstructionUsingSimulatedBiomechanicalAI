@@ -54,9 +54,84 @@ function libSetStatus(jobId, status) {
   const it = items.find(i => i.jobId === jobId);
   if (it) { it.status = status; libSave(items); renderLibrary(); }
 }
-function libRemove(jobId) {
+/* removed-swing tombstones: ✕ hides a swing from THIS browser's list, and the
+ * team-library sync must not resurrect it — without these, a removed job is
+ * indistinguishable from a teammate's upload we've never seen, so every sync
+ * pushed it straight back (the "delete doesn't work" bug). Shared with the
+ * demo page (app.js) via the same storage key. */
+const HIDDEN_KEY = "mc_library_hidden_v1";
+function hiddenLoad() {
+  try { return JSON.parse(localStorage.getItem(HIDDEN_KEY)) || []; }
+  catch (e) { return []; }
+}
+function hiddenAdd(jobId) {
+  const ids = hiddenLoad().filter(id => id !== jobId);
+  ids.unshift(jobId);
+  localStorage.setItem(HIDDEN_KEY, JSON.stringify(ids.slice(0, 500)));
+}
+
+/* uploaded swings live in S3 under a 32-hex job id; anything else (demo
+ * clips) exists only in this browser and can't be server-deleted */
+const isUploadedJob = (jobId) => /^[0-9a-f]{32}$/.test(jobId);
+
+/* ---------------- practice sessions (chat v2, CHAT_V2_PLAN.md §1) ----------
+ * A session = one practice visit. This browser keeps a "current session" id
+ * alive for 2 h past the last upload; it rides to the backend as object
+ * metadata so every device (and the coach) groups the same way. */
+const SESSION_KEY = "mc_session_v1";
+const SESSION_GAP_MS = 2 * 3600 * 1000;
+
+function currentSession() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) { /* fresh */ }
+  const now = Date.now();
+  if (!s || !s.id || now - (s.last || 0) > SESSION_GAP_MS) {
+    s = { id: Array.from(crypto.getRandomValues(new Uint8Array(6)))
+            .map(b => b.toString(16).padStart(2, "0")).join(""), last: now };
+  }
+  s.last = now;
+  localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  return s;
+}
+
+/* location for the weather backfill — ONLY when the browser permission is
+ * already granted. Never prompts: sharing location stays the user's explicit
+ * choice made in browser settings, not a surprise dialog mid-upload. */
+async function grantedCoords() {
+  try {
+    if (!navigator.permissions || !navigator.geolocation) return null;
+    const st = await navigator.permissions.query({ name: "geolocation" });
+    if (st.state !== "granted") return null;
+    return await new Promise(res => navigator.geolocation.getCurrentPosition(
+      p => res({ lat: p.coords.latitude.toFixed(4), lon: p.coords.longitude.toFixed(4) }),
+      () => res(null), { timeout: 2500, maximumAge: 10 * 60 * 1000 }));
+  } catch (e) { return null; }
+}
+
+async function libRemove(jobId) {
+  const name = libName(jobId) || "this swing";
+  if (isUploadedJob(jobId) &&
+      !confirm(`Delete "${name}" for the whole team?\n\nThis permanently removes the video and results for everyone — it can't be undone.`)) {
+    return;
+  }
+  hiddenAdd(jobId);              // instant + survives the next team-library sync
   libSave(libLoad().filter(i => i.jobId !== jobId));
   renderLibrary();
+  // team-wide hard delete: destroy the S3 artifacts + original upload so the
+  // swing disappears for every teammate, not just this browser
+  if (isUploadedJob(jobId) && window.API_BASE && devOnly()) {
+    try {
+      const code = (document.cookie.match(/(?:^|;\s*)mc_dev=([^;]+)/) || [])[1] || "";
+      const r = await fetch(`${window.API_BASE}/jobs?id=${jobId}`, {
+        method: "DELETE",
+        headers: { "x-mc-access": decodeURIComponent(code) },
+      });
+      if (!r.ok && r.status !== 404) throw new Error("delete http " + r.status);
+    } catch (e) {
+      // the local tombstone already hides it here; teammates may still see it
+      console.warn("server-side delete failed (swing hidden locally only):", e);
+    }
+  }
 }
 function libName(jobId) {
   const it = libLoad().find(i => i.jobId === jobId);
@@ -71,6 +146,8 @@ const state = {
   bundle: null,
   viewer: null,
   jobMetrics: {},     // jobId -> metrics.json (for compare + chat grounding)
+  analyzePreview: null,  // sample-swing viewer on the analyze screen
+  analyzeYaw: null,      // yaw-drift interval for its canvas fallback
 };
 window.__MC_STATE__ = state;
 
@@ -93,6 +170,7 @@ const SCREENS = { pick: "#screen-pick", analyze: "#screen-analyze", results: "#s
 const NAV_ORDER = ["pick", "analyze", "results"];
 
 function goto(screen) {
+  if (screen !== "analyze") stopAnalyzePreview();   // free the GL context on any nav away
   for (const [name, sel] of Object.entries(SCREENS)) {
     $(sel).hidden = name !== screen;
   }
@@ -178,17 +256,39 @@ async function syncTeamLibrary() {
     const { jobs } = await r.json();
     const local = libLoad();
     const byId = Object.fromEntries(local.map(i => [i.jobId, i]));
+    const hidden = new Set(hiddenLoad());
     let changed = false;
     for (const j of jobs) {
       if (!j.ready) continue;
+      if (hidden.has(j.job_id)) continue;   // user removed it from this browser
       const mine = byId[j.job_id];   // the /jobs Lambda speaks snake_case
       if (mine) {   // upgrade placeholder names/stale status, keep local names
         if ((mine.name === "shared swing" || !mine.name) && j.name) { mine.name = j.name; changed = true; }
         if (mine.status !== "ready") { mine.status = "ready"; changed = true; }
+        // session/context fields from job_meta (uploaded_at, session, notes)
+        for (const [k, lk] of [["session_id", "sessionId"], ["session_label", "sessionLabel"],
+                               ["club", "club"], ["notes", "notes"]]) {
+          if (j[k] && mine[lk] !== j[k]) { mine[lk] = j[k]; changed = true; }
+        }
       } else {
-        local.push({ jobId: j.job_id, name: j.name, date: j.date, status: "ready" });
+        local.push({ jobId: j.job_id, name: j.name, date: j.date, status: "ready",
+                     sessionId: j.session_id, sessionLabel: j.session_label,
+                     club: j.club, notes: j.notes });
         changed = true;
       }
+    }
+    // prune entries whose job no longer exists server-side (teammate deleted
+    // it, or the 90-day TTL expired). Without this a deleted swing stays
+    // "Ready" in every OTHER browser forever — opening it 404s and the chat
+    // falls back to the offline read. Keep fresh uploads (<20 min): they may
+    // not have hit 03_outputs yet.
+    const serverIds = new Set(jobs.map(j => j.job_id));
+    const pruned = local.filter(it =>
+      !isUploadedJob(it.jobId) || serverIds.has(it.jobId) ||
+      Date.now() - new Date(it.date).getTime() < 20 * 60 * 1000);
+    if (pruned.length !== local.length) {
+      local.length = 0; local.push(...pruned);
+      changed = true;
     }
     if (changed) {
       local.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -231,11 +331,15 @@ async function startUpload() {
   const seq = ++navSeq;
   startCloudAnalyzeUI(seq);
   try {
-    // 1 · presigned slot
+    // 1 · presigned slot (+ session id and, when already permitted, location
+    // for the weather backfill — both ride as S3 object metadata)
+    const sess = currentSession();
+    const coords = await grantedCoords();
     const pr = await fetch(window.UPLOAD_URL, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ filename: upload.name,
-                             content_type: upload.file.type || "video/mp4" }),
+                             content_type: upload.file.type || "video/mp4",
+                             session: { session_id: sess.id, ...(coords || {}) } }),
     });
     if (!pr.ok) throw new Error("presign http " + pr.status);
     const slot = await pr.json();
@@ -247,7 +351,7 @@ async function startUpload() {
     if (!up.ok) throw new Error("s3 http " + up.status);
     // 3 · track + wait for the pipeline (~2-3 min; poll up to 8)
     state.pendingJob = slot.job_id;
-    libAdd({ jobId: slot.job_id, name: upload.name,
+    libAdd({ jobId: slot.job_id, name: upload.name, sessionId: slot.session_id || sess.id,
              date: new Date().toISOString(), status: "processing" });
     const ready = await pollJob(slot.job_id, 96, 5000);
     if (seq !== navSeq) return;              // user navigated away meanwhile
@@ -267,6 +371,49 @@ async function startUpload() {
   }
 }
 
+/* ---- analyze-screen sample preview (canned swing loop) --------------------
+ * While the cloud pipeline runs, loop the deployed demo swing (assets/269) as
+ * a rotating clay-mannequin preview. Clearly captioned as a SAMPLE — it is
+ * NOT the user's upload being reconstructed live. Viewer selection mirrors
+ * the results screen: WebGL capsule viewer (slow auto-rotate) with the
+ * canvas skeleton as fallback (gentle yaw drift). Decorative only — any
+ * failure just leaves the plain screen. */
+function stopAnalyzePreview() {
+  if (state.analyzeYaw) { clearInterval(state.analyzeYaw); state.analyzeYaw = null; }
+  if (state.analyzePreview) {
+    if (typeof state.analyzePreview.destroy === "function") state.analyzePreview.destroy();
+    state.analyzePreview = null;
+  }
+  const panel = document.querySelector(".analyze-panel");
+  if (panel) panel.classList.remove("analyze-live");
+}
+
+async function startAnalyzePreview(seq) {
+  stopAnalyzePreview();
+  const panel = document.querySelector(".analyze-panel");
+  if (!panel || !document.getElementById("analyze-preview")) return;
+  panel.classList.add("analyze-live");
+  try {
+    const data = await fetch("assets/269/replay_3d.json").then(r => r.json());
+    if (seq !== navSeq || !panel.classList.contains("analyze-live")) return;
+    const canvas = resetCanvas("#analyze-preview");
+    const Cap = window.CapsuleViewer3D;
+    if (Cap && Cap.supported()) {
+      const v = new Cap(canvas, data, {});
+      v.controls.autoRotate = true;             // slow turntable (caller-side config)
+      v.controls.autoRotateSpeed = 0.8;
+      state.analyzePreview = v;
+    } else {
+      const ui = { scrub: document.createElement("input"),
+                   playBtn: document.createElement("button"),
+                   label: document.createElement("span") };
+      const v = new Replay3D(canvas, data, ui);
+      state.analyzePreview = v;
+      state.analyzeYaw = setInterval(() => { v.yaw += 0.004; }, 33);
+    }
+  } catch (e) { /* decorative — never block the analyze screen */ }
+}
+
 /* analyze screen paced for the real pipeline */
 function startCloudAnalyzeUI(seq) {
   goto("analyze");
@@ -274,8 +421,12 @@ function startCloudAnalyzeUI(seq) {
   if (note) note.hidden = false;
   const items = [...document.querySelectorAll("#analyze-steps li")];
   items.forEach(li => li.classList.remove("doing", "done"));
+  const line = $("#analyze-step-line");
+  startAnalyzePreview(seq);
   const t0 = Date.now();
   const timer = setInterval(() => {
+    // NB: no stopAnalyzePreview() here — a NEWER analyze run may own the
+    // preview by now; every real navigation away goes through goto(), which stops it.
     if (seq !== navSeq) { clearInterval(timer); if (note) note.hidden = true; return; }
     if (elapsed) {
       const s = Math.round((Date.now() - t0) / 1000);
@@ -288,12 +439,24 @@ function startCloudAnalyzeUI(seq) {
     if (i > 0) items[i - 1].classList.replace("doing", "done");
     if (i < items.length) {
       items[i].classList.add("doing");
+      if (line) {                                  // one quiet advancing line (same copy)
+        const strong = items[i].querySelector("strong");
+        const small = items[i].querySelector("div > span");  // NOT "div span": scoped
+        // selectors match against the document, so the outer panel div would
+        // make the empty .check span the first hit
+        line.classList.remove("show");
+        void line.offsetWidth;                     // restart the fade transition
+        line.textContent = (strong ? strong.textContent : "") +
+                           (small ? " — " + small.textContent : "");
+        line.classList.add("show");
+      }
       i += 1;
       if (i < items.length) setTimeout(tick, 15000);   // ~90s across 7 real steps
     }
   };
   tick();
 }
+state.debugAnalyze = () => startCloudAnalyzeUI(++navSeq);  // console/QA hook (same spirit as __MC_STATE__)
 
 /* ---- readiness: ALL result files must exist behind CloudFront ----
  * NB: CloudFront rewrites S3 403s to 200/index.html, so require a non-HTML
@@ -353,7 +516,7 @@ function renderLibrary() {
       — private during the pilot. Sign in with the dev account to view.</p>`;
     return;
   }
-  wrap.innerHTML = items.map(it => {
+  const rowHTML = (it) => {
     const date = new Date(it.date).toLocaleDateString();
     const ready = it.status === "ready";
     const badge = ready ? `<span class="upload-badge ok">Ready</span>`
@@ -361,13 +524,43 @@ function renderLibrary() {
       : `<span class="upload-badge">Processing<span class="pulse">…</span></span>`;
     return `<div class="dash-swing" data-job="${esc(it.jobId)}" data-ready="${ready}">
       <span class="dash-swing-name" title="${esc(it.name)}">${esc(it.name)}</span>
-      <span class="muted small">${esc(date)}</span>${badge}
+      <span class="dash-swing-date muted small">${esc(date)}</span>${badge}
       ${ready ? `<button type="button" class="btn-ghost small lib-open">Open result</button>` : ""}
       <button type="button" class="btn-ghost small lib-rename" title="Rename this swing"
               aria-label="Rename ${esc(it.name)}">✎</button>
-      <button type="button" class="btn-ghost small lib-remove" title="Remove from this list"
-              aria-label="Remove ${esc(it.name)} from this list">✕</button>
+      ${isUploadedJob(it.jobId)
+        ? `<button type="button" class="btn-ghost small lib-remove" title="Delete this swing for the whole team"
+              aria-label="Delete ${esc(it.name)} for the whole team">✕</button>`
+        : `<button type="button" class="btn-ghost small lib-remove" title="Remove from this list"
+              aria-label="Remove ${esc(it.name)} from this list">✕</button>`}
     </div>`;
+  };
+  // group into practice sessions: shared sessionId wins; otherwise swings
+  // within 2 h of the previous one (newest-first walk) share a visit — the
+  // same rule the backend's clustering uses, so chat and library agree
+  const sorted = [...items].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  const groups = [];
+  for (const it of sorted) {
+    const g = groups[groups.length - 1];
+    const sameDeclared = g && it.sessionId && g.sessionId && it.sessionId === g.sessionId;
+    const sameByGap = g && !it.sessionId && !g.sessionId && g.lastDate && it.date &&
+      (new Date(g.lastDate) - new Date(it.date)) <= 2 * 3600 * 1000;
+    if (sameDeclared || sameByGap) {
+      g.items.push(it); g.lastDate = it.date;
+      if (!g.label && it.sessionLabel) g.label = it.sessionLabel;
+    } else {
+      groups.push({ sessionId: it.sessionId || null, label: it.sessionLabel || null,
+                    firstDate: it.date, lastDate: it.date, items: [it] });
+    }
+  }
+  wrap.innerHTML = groups.map(g => {
+    const when = g.firstDate
+      ? new Date(g.firstDate).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+      : "undated";
+    const head = `<div class="muted small session-head" style="margin:10px 0 4px;font-weight:600">
+        ${esc(g.label || "Session")} · ${esc(when)} · ${g.items.length} swing${g.items.length > 1 ? "s" : ""}
+      </div>`;
+    return head + g.items.map(rowHTML).join("");
   }).join("");
   wrap.querySelectorAll(".lib-open").forEach(b =>
     b.addEventListener("click", () => openJob(b.closest(".dash-swing").dataset.job)));
@@ -417,18 +610,30 @@ async function jobMetricsFor(jobId) {
 
 /* register the active job (and its ready siblings) with the grounded chat */
 async function activateChat(jobId) {
-  const entries = [{ jobId, name: libName(jobId) || "this swing" },
+  const mine = libLoad().find(i => i.jobId === jobId);
+  const entries = [{ jobId, name: libName(jobId) || "this swing", date: mine && mine.date },
                    // cap chat compare prefetch — one metrics.json per sibling
-                   ...otherReadyJobs().slice(0, 12).map(i => ({ jobId: i.jobId, name: i.name }))];
+                   ...otherReadyJobs().slice(0, 12).map(i => ({ jobId: i.jobId, name: i.name,
+                                                               date: i.date }))];
   const clips = [], byId = {};
   for (const e of entries) {
     try {
       byId[e.jobId] = await jobMetricsFor(e.jobId);
-      clips.push({ id: e.jobId, title: `your swing (${e.name})`, club: "", view: "" });
+      clips.push({ id: e.jobId, title: `your swing (${e.name})`, club: "", view: "",
+                   date: e.date || null });
     } catch (err) { /* a job without metrics just won't be chat-enabled */ }
   }
   Chat.setLibrary(clips, byId);
   Chat.activate(jobId);
+  // "what changed since last time" — one live turn, result on the banner too
+  Chat.autoBrief(text => {
+    const banner = $("#results-banner"), span = $("#results-banner-text");
+    if (!banner || !span || state.selectedId !== jobId) return;
+    const brief = text.replace(/\s+/g, " ").trim();
+    span.innerHTML = `<strong>Since last session:</strong> ${esc(brief.slice(0, 260))}` +
+      (brief.length > 260 ? "…" : "") + ` <span class="muted small">— ask the coach for detail</span>`;
+    banner.hidden = false;
+  });
 }
 
 async function openJob(jobId) {
@@ -854,12 +1059,19 @@ class Replay3D {
     const fr = this.data.frames[this.frame];
     const proj = fr.map(p => this._project(p));
 
+    // club bones (either end = estimated clubhead 17) draw as a muted thin
+    // two-pole placeholder. DELIBERATE: we do not track the club — the clubhead
+    // is a forearm extrapolation (web_artifacts.py) — so this stays an honest
+    // schematic rather than implying tracking we don't have.
+    // TODO(v2-club-tracking): faithful club once measured (DEPLOYMENT_PLAN.md).
+    const isClub = (b) => b.a === 17 || b.b === 17;
+
     const bones = [...this.data.bones].sort((p, q) =>
       Math.min(proj[p.a][2], proj[p.b][2]) - Math.min(proj[q.a][2], proj[q.b][2]));
     for (const bone of bones) {
       const a = proj[bone.a], b = proj[bone.b];
-      ctx.strokeStyle = bone.color;
-      ctx.lineWidth = 3.5 * Math.min(a[2], b[2]);
+      ctx.strokeStyle = isClub(bone) ? "#8e9089" : bone.color;
+      ctx.lineWidth = (isClub(bone) ? 2.0 : 3.5) * Math.min(a[2], b[2]);
       ctx.lineCap = "round";
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
     }

@@ -51,6 +51,53 @@ _BOUNDS = {
     "sidespin_rpm": (-4000.0, 4000.0),
 }
 
+# playing-conditions bounds (weather feature, CHAT_V2_PLAN.md §2a)
+_COND_BOUNDS = {
+    "temp_c": (-20.0, 50.0),
+    "pressure_hpa": (850.0, 1085.0),
+    "humidity_pct": (0.0, 100.0),
+    "elevation_m": (-100.0, 4000.0),
+    "wind_mph": (0.0, 40.0),
+    "wind_dir_deg": (-360.0, 360.0),
+}
+
+_R_DRY = 287.058      # J/(kg·K) specific gas constant, dry air
+_R_VAPOR = 461.495    # J/(kg·K) water vapor
+
+
+def air_density(temp_c: float = 15.0, pressure_hpa: float | None = None,
+                humidity_pct: float = 0.0, elevation_m: float = 0.0) -> float:
+    """Air density (kg/m^3) from playing conditions. Ideal gas with the
+    humid-air vapor-pressure correction (Magnus formula for saturation).
+    When station pressure isn't given it comes from elevation via the
+    standard-atmosphere barometric formula. Defaults reproduce the historic
+    AIR_DENSITY constant: air_density() == 1.225 (ISA sea level, 15 C, dry)."""
+    t = min(max(float(temp_c), *_COND_BOUNDS["temp_c"][:1]), _COND_BOUNDS["temp_c"][1])
+    if pressure_hpa is None:
+        elev = min(max(float(elevation_m), *_COND_BOUNDS["elevation_m"][:1]),
+                   _COND_BOUNDS["elevation_m"][1])
+        # ISA troposphere: P = P0 * (1 - L*h/T0)^(g*M/(R*L))
+        pressure_hpa = 1013.25 * (1.0 - 2.25577e-5 * elev) ** 5.25588
+    p_pa = min(max(float(pressure_hpa), *_COND_BOUNDS["pressure_hpa"][:1]),
+               _COND_BOUNDS["pressure_hpa"][1]) * 100.0
+    rh = min(max(float(humidity_pct), 0.0), 100.0) / 100.0
+    t_k = t + 273.15
+    # saturation vapor pressure (Magnus), Pa
+    p_sat = 610.94 * math.exp(17.625 * t / (t + 243.04))
+    p_v = rh * p_sat
+    p_d = p_pa - p_v
+    return p_d / (_R_DRY * t_k) + p_v / (_R_VAPOR * t_k)
+
+
+def wind_vector_ms(wind_mph: float, wind_dir_deg: float = 0.0) -> tuple[float, float]:
+    """Constant wind as (wx, wz->0 omitted) ... returns (wx, wy) in m/s, world
+    frame (+y toward the target, +x right of the target line). `wind_dir_deg`
+    is the direction the wind BLOWS TOWARD: 0 = tailwind (with the shot),
+    180 = headwind, 90 = left-to-right (pushes the ball right)."""
+    v = min(max(float(wind_mph), 0.0), _COND_BOUNDS["wind_mph"][1]) * MPH_TO_MS
+    d = math.radians(float(wind_dir_deg))
+    return v * math.sin(d), v * math.cos(d)
+
 # --------------------------------------------------------------------------- #
 # Optional Phys-NN engine (paper's pM-cQ variant; see module docstring)
 # --------------------------------------------------------------------------- #
@@ -157,16 +204,26 @@ def _simulate_nn(ball_speed_mph: float, launch_angle_deg: float, backspin_rpm: f
 def simulate_flight(ball_speed_mph: float, launch_angle_deg: float,
                     backspin_rpm: float, sidespin_rpm: float = 0.0,
                     azimuth_deg: float = 0.0, dt: float = 0.01,
-                    max_time_s: float = 15.0, trajectory_points: int = 0) -> dict:
+                    max_time_s: float = 15.0, trajectory_points: int = 0,
+                    wind: tuple[float, float] | None = None,
+                    rho: float | None = None) -> dict:
     """Integrate one ball flight; returns carry/side/apex/flight time (floats).
 
     With trajectory_points > 0, also returns ~that many [downrange_yd, height_yd,
     side_yd] samples spanning launch to landing (for UI rendering).
 
+    `wind` is an optional (wind_mph, wind_dir_toward_deg) pair — see
+    wind_vector_ms — applied as a constant field: aerodynamic forces (drag,
+    Magnus, spin decay) act on the AIR-RELATIVE velocity while position
+    integrates ground velocity. `rho` overrides air density (kg/m^3; see
+    air_density) — default keeps the historic 1.225 constant.
+
     Magnus lift acts along w x v (the paper writes v x w but uses the opposite
     spin-axis sign convention; w x v is what reproduces real tour carries —
     with v x w a driver flight dives at ~83 yd).
     """
+    rho = AIR_DENSITY if rho is None else float(rho)
+    wind_x, wind_y = wind_vector_ms(*wind) if wind else (0.0, 0.0)
     v = ball_speed_mph * MPH_TO_MS
     la, az = math.radians(launch_angle_deg), math.radians(azimuth_deg)
     vx = v * math.cos(la) * math.sin(az)
@@ -178,22 +235,24 @@ def simulate_flight(ball_speed_mph: float, launch_angle_deg: float,
     apex, t = z, 0.0
     traj = [(y, z, x)]
     while t < max_time_s:
-        vmag = math.sqrt(vx * vx + vy * vy + vz * vz)
+        # aerodynamics act on the air-relative velocity
+        ax_, ay_, az_ = vx - wind_x, vy - wind_y, vz
+        vmag = math.sqrt(ax_ * ax_ + ay_ * ay_ + az_ * az_) or 1e-9
         wmag = math.sqrt(wx * wx + wy * wy + wz * wz)
         S = BALL_RADIUS_M * wmag / vmag if vmag > 0 else 0.0
         CD = 0.1304 + 0.9287 * S - 0.8259 * S * S
         CL = 0.0504 + 1.2031 * S - 1.1490 * S * S
         CM = 0.01 * S
-        q = 0.5 * AIR_DENSITY * vmag * vmag
-        cx = wy * vz - wz * vy
-        cy = wz * vx - wx * vz
-        cz = wx * vy - wy * vx
+        q = 0.5 * rho * vmag * vmag
+        cx = wy * az_ - wz * ay_
+        cy = wz * ax_ - wx * az_
+        cz = wx * ay_ - wy * ax_
         cmag = math.sqrt(cx * cx + cy * cy + cz * cz) or 1.0
         FL = CL * q * BALL_AREA_M2
         FD = CD * q * BALL_AREA_M2
-        fx = FL * cx / cmag - FD * vx / vmag
-        fy = FL * cy / cmag - FD * vy / vmag
-        fz = FL * cz / cmag - FD * vz / vmag - BALL_MASS_KG * GRAVITY
+        fx = FL * cx / cmag - FD * ax_ / vmag
+        fy = FL * cy / cmag - FD * ay_ / vmag
+        fz = FL * cz / cmag - FD * az_ / vmag - BALL_MASS_KG * GRAVITY
         torque = CM * q * (2 * BALL_RADIUS_M) * BALL_AREA_M2
         if wmag > 0:
             decay = dt * torque / BALL_INERTIA / wmag
@@ -271,15 +330,32 @@ def normalize_club(club: str | None) -> str | None:
     return CLUB_ALIASES.get(c)
 
 
+def clean_conditions(raw: dict | None) -> dict:
+    """Whitelist + clamp playing-condition inputs (weather feature). Returns
+    only the recognized numeric fields; empty dict = standard conditions."""
+    out = {}
+    for name, (lo, hi) in _COND_BOUNDS.items():
+        val = (raw or {}).get(name)
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            out[name] = min(max(float(val), lo), hi)
+    return out
+
+
 def estimate_for_club(club: str | None, tier: str = "tour",
                       overrides: dict | None = None,
-                      speed_scale: float = 1.0) -> dict:
+                      speed_scale: float = 1.0,
+                      conditions: dict | None = None) -> dict:
     """Simulate a typical flight for `club`, with optional launch overrides.
 
     speed_scale nudges the tier-default ball speed for what we measured of THIS
     swing (hand speed vs tour-typical). Clamped to ±12% — it is a low-confidence
     single-camera hint, not a launch monitor. A golfer-stated ball_speed_mph
     override always wins over the scale.
+
+    `conditions` (temp_c / pressure_hpa / humidity_pct / elevation_m /
+    wind_mph / wind_dir_deg — see clean_conditions) adjusts the WHAT-IF sim:
+    density via air_density(), wind as a constant field. Conditions force the
+    Phys-Q integrator — the NN was trained at standard density with no wind.
 
     Returns a JSON-able dict whose display numbers are pre-rounded — the chat
     grounding verifier matches answer numbers against tool-result numbers, so
@@ -318,9 +394,23 @@ def estimate_for_club(club: str | None, tier: str = "tour",
 
     if "ball_speed_mph" in used_overrides:
         scale = 1.0                      # a stated ball speed makes the nudge moot
-    use_nn = nn_in_envelope(ball_speed, launch, backspin, sidespin)
-    sim = _simulate_nn if use_nn else simulate_flight
-    r = sim(ball_speed, launch, backspin, sidespin, trajectory_points=24)
+
+    cond = clean_conditions(conditions)
+    rho = air_density(temp_c=cond.get("temp_c", 15.0),
+                      pressure_hpa=cond.get("pressure_hpa"),
+                      humidity_pct=cond.get("humidity_pct", 0.0),
+                      elevation_m=cond.get("elevation_m", 0.0)) if cond else AIR_DENSITY
+    wind = (cond["wind_mph"], cond.get("wind_dir_deg", 0.0)) \
+        if cond.get("wind_mph") else None
+    nonstandard = bool(wind) or abs(rho - AIR_DENSITY) > 0.001
+
+    use_nn = nn_in_envelope(ball_speed, launch, backspin, sidespin) and not nonstandard
+    if use_nn:
+        r = _simulate_nn(ball_speed, launch, backspin, sidespin, trajectory_points=24)
+    else:
+        r = simulate_flight(ball_speed, launch, backspin, sidespin,
+                            trajectory_points=24, wind=wind,
+                            rho=rho if nonstandard else None)
     side = round(r["side_yd"])
     shape = "straight" if abs(side) < 3 else ("right (fade side)" if side > 0 else "left (draw side)")
     return {
@@ -343,6 +433,14 @@ def estimate_for_club(club: str | None, tier: str = "tour",
         # shots, 1.8 yd val landing err); phys_q = published polynomial fallback
         # for launch conditions outside the NN's training envelope
         "engine": "phys_nn" if use_nn else "phys_q",
+        **({"conditions_applied": {
+                **{k: round(cond[k], 1) for k in cond},
+                "air_density_kgm3": round(rho, 4),
+                "note": ("Playing conditions adjusted this WHAT-IF simulation "
+                         "(wind_dir_deg: 0=tailwind, 180=headwind, 90=left-to-right). "
+                         "Conditions never change a MEASURED carry - only what the "
+                         "same launch would do in that air."),
+            }} if nonstandard else {}),
         "note": "Simulated with a physics model from typical launch conditions for this "
                 "club — an estimate, not a measurement of the ball in the video.",
         # "_ui"-prefixed keys are stripped from what the model sees (and from the

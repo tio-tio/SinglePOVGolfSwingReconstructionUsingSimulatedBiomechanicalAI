@@ -85,7 +85,8 @@ const Chat = (() => {
         plain: m.plain || r.label, in: m.in || "", lo: m.lo || "", hi: m.hi || "",
       };
     }
-    CLIPDATA[clip.id] = { name: clip.title, club: clip.club, view: clip.view, ind };
+    CLIPDATA[clip.id] = { name: clip.title, club: clip.club, view: clip.view,
+                          date: clip.date || null, ind };
   }
 
   /* ---- accessors ---- */
@@ -192,7 +193,7 @@ const Chat = (() => {
     }
     if (has(UNMEASURED, ql) && !findKey(ql)) { call("list_indicators", {}, { count: t_list().count, matched: false }); return { toolCalls: tc, refuse: true, answer: "That isn't something this swing analysis measures — it works from body motion, not ball flight, club, or contact. So I can't tell you that from what I have." }; }
     if (has(LOWCONF, ql) && matchMetrics(ql).length === 0) { call("get_indicator", { key: "left_arm_bend_top_deg" }, t_get("left_arm_bend_top_deg")); return { toolCalls: tc, refuse: true, answer: "That one comes from a single camera, so the measurement isn't reliable enough to judge — I'd rather not call it either way than guess." }; }
-    if (has(FIX, ql) && !has(PROG, ql) && !SUMMARY.test(ql)) { return { toolCalls: tc, refuse: true, answer: "I can describe what your swing did, but I don't give fixes or drills — that's outside what this tool is meant to do. Want me to walk through what stood out instead?" }; }
+    if (has(FIX, ql) && !has(PROG, ql) && !SUMMARY.test(ql)) { return { toolCalls: tc, refuse: true, answer: "The live coach can suggest reviewed practice drills for anything measured out of range — in this offline preview I can only describe the swing. Want me to walk through what stood out?" }; }
     if (REF.test(ql)) return rundown(tc, call, reliableKeys(ACTIVE), has(PROG, ql) && cmp);
     if (SUMMARY.test(ql) && matchMetrics(ql).length < 2) return summarize(tc, call, cmp);
     { const ms = matchMetrics(ql); if (ms.length >= 2 && (/[,&]|\band\b|\bplus\b/.test(ql) || ms.length >= 3)) return rundown(tc, call, ms, has(PROG, ql) && cmp); }
@@ -263,7 +264,10 @@ const Chat = (() => {
     const lc = new Set();
     (res.toolCalls || []).forEach(e => { const r = e.result; if (!r) return; if ((e.name === "get_indicator" || e.name === "compare_indicator") && (r.reliable === false || r.confidence_tier === "low")) lc.add(r.key); });
     lc.forEach(k => { if (IND(ACTIVE)[k] && a.includes(String(val(k, ACTIVE)))) v.push("low_confidence_leak"); });
-    if (!res.refuse && /\byou should\b|\btry to\b|\bwork on\b|\bdrill\b|\bpractice\b/.test(a)) v.push("prescriptive");
+    // the offline mock has no get_drills tool, so ANY prescriptive wording here
+    // is unretrieved advice (the live server allows advice only when it relays
+    // a drill card fetched this turn — see verify_chat_grounding)
+    if (!res.refuse && /\byou should\b|\btry to\b|\bwork on\b|\bdrill\b|\bpractice\b/.test(a)) v.push("ungrounded_prescription");
     return { grounded: v.length === 0, violations: v };
   }
 
@@ -543,6 +547,24 @@ const Chat = (() => {
     try { res = await askChat(q); }
     catch (e) { res = respond(q); res.answer += "  (couldn't reach the live coach — showing the offline read)"; }
     typing.remove(); addBot(res);
+    return res;
+  }
+
+  /* "what changed since last time" auto-brief (chat v2 §4a): one canned turn
+   * through the normal live /chat path when a job opens and the library has
+   * other swings. Runs at most once per swing per page load; the transcript
+   * keeps the exchange so follow-ups have context, and the caller gets the
+   * answer text for the results banner. Never fires on the offline mock. */
+  const BRIEFED = new Set();
+  async function autoBrief(onAnswer) {
+    if (!liveFor(ACTIVE) || BRIEFED.has(ACTIVE)) return null;
+    if (Object.keys(CLIPDATA).filter(c => c !== ACTIVE).length === 0) return null;
+    BRIEFED.add(ACTIVE);
+    try {
+      const res = await ask("In one or two sentences: what changed in this swing versus my previous session?");
+      if (res && res.answer && onAnswer) onAnswer(res.answer);
+      return res;
+    } catch (e) { return null; }
   }
   function greet() {
     const c = CLIPDATA[ACTIVE];
@@ -556,7 +578,12 @@ const Chat = (() => {
   function populateCompare() {
     if (!dom.compare) return;
     dom.compare.innerHTML = '<option value="">— none —</option>';
-    Object.keys(CLIPDATA).filter(c => c !== ACTIVE).forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = CLIPDATA[c].name; dom.compare.append(o); });
+    Object.keys(CLIPDATA).filter(c => c !== ACTIVE).forEach(c => {
+      const o = document.createElement("option"); o.value = c;
+      const d = CLIPDATA[c].date ? ` · ${new Date(CLIPDATA[c].date).toLocaleDateString()}` : "";
+      o.textContent = CLIPDATA[c].name + d;
+      dom.compare.append(o);
+    });
     dom.compare.value = COMPARE || "";
   }
 
@@ -594,5 +621,6 @@ const Chat = (() => {
                            : "offline preview · in-page coach");
       populateCompare(); greet();
     },
+    autoBrief,
   };
 })();

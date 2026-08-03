@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0c5c3a">
 <title>MotionCaddie — see your golf swing in 3D</title>
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="styles.css?v=20260727a">
+<link rel="stylesheet" href="styles.css?v=20260801b">
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
 </head>
 <body>
@@ -86,6 +86,15 @@
 <section id="screen-analyze" class="screen" hidden>
   <div class="analyze-panel card">
     <h2 id="analyze-title">Analyzing your swing</h2>
+    <!-- live-processing preview (cloud path only, shown via .analyze-live):
+         a canned SAMPLE swing loop — clearly not the user's upload. The 7-step
+         <ol> below stays in the DOM as the screen-reader copy + source of the
+         advancing step line. -->
+    <div class="analyze-preview-wrap" aria-hidden="true">
+      <canvas id="analyze-preview" width="480" height="300"></canvas>
+      <p class="analyze-preview-caption">Sample swing preview — yours is processing</p>
+      <p id="analyze-step-line"></p>
+    </div>
     <ol id="analyze-steps" class="analyze-steps">
       <li data-step="1"><span class="check"></span><div><strong>Reading the video</strong><span>Pulling frames from the clip</span></div></li>
       <li data-step="2"><span class="check"></span><div><strong>Finding the body</strong><span>Placing 2D markers on every joint, every frame</span></div></li>
@@ -286,12 +295,12 @@
 </div>
 
 <script src="hills.js?v=20260718b"></script>
-<script type="module" src="replay3d.js?v=20260718a"></script>
+<script type="module" src="replay3d.js?v=20260801a"></script>
 <script src="config.js?v=20260717b"></script>
 <script src="auth.js?v=20260728a"></script>
 <script src="vendor/marked.min.js"></script>
 <script src="chat.js?v=20260726b"></script>
 <script src="ballflight.js?v=20260718d"></script>
-<script src="app.js?v=20260718d"></script>
+<script src="app.js?v=20260801c"></script>
 </body>
 </html>

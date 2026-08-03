@@ -18,9 +18,12 @@ python -m pip install "anthropic>=0.111,<1.0" "numpy>=1.26" \
 cp "$ROOT/deploy/chat_handler.py" "$PKG/chat_handler.py"
 mkdir -p "$PKG/Scripts" "$PKG/Data/coaching"
 cp "$ROOT/Scripts/coaching_chat.py" "$ROOT/Scripts/coaching_llm_summary_v2.py" \
-   "$ROOT/Scripts/coaching_persona.py" "$ROOT/Scripts/ball_flight.py" "$PKG/Scripts/"
+   "$ROOT/Scripts/coaching_persona.py" "$ROOT/Scripts/ball_flight.py" \
+   "$ROOT/Scripts/session_meta.py" "$ROOT/Scripts/coaching_sessions.py" \
+   "$ROOT/Scripts/coaching_progress.py" "$PKG/Scripts/"   # chat v2: sessions + compare
 cp "$ROOT/Data/coaching/indicator_kb.json" "$PKG/Data/coaching/"
 cp "$ROOT/Data/coaching/ball_flight_nn.json" "$PKG/Data/coaching/"   # Phys-NN weights
+cp "$ROOT/Data/coaching/drill_cards.json" "$PKG/Data/coaching/"      # grounded coaching corpus
 # coaching_chat.load_persona() reads these by name at runtime (default
 # "traditional"); missing dir raises PersonaLoadError on every /chat call.
 cp -r "$ROOT/Data/coaching/personas" "$PKG/Data/coaching/personas"
