@@ -506,6 +506,7 @@ async function reconcileLibrary() {
 
 /* ====================== library card rendering ========================= */
 function renderLibrary() {
+  renderSwingCalendar();   // the calendar card tracks the same library data
   const box = $("#library"), wrap = $("#library-cards");
   if (!box) return;
   const items = libLoad();
@@ -568,6 +569,48 @@ function renderLibrary() {
     b.addEventListener("click", () => libRename(b.closest(".dash-swing").dataset.job)));
   wrap.querySelectorAll(".lib-remove").forEach(b =>
     b.addEventListener("click", () => libRemove(b.closest(".dash-swing").dataset.job)));
+}
+
+/* ==================== swing-frequency calendar ===========================
+ * Current month, one cell per day, shaded by how many swings were analyzed
+ * that day. Only DATES from the library are used, so it renders even when
+ * the swing list itself is locked behind the dev account. */
+function renderSwingCalendar() {
+  const grid = $("#cal-grid"), title = $("#cal-title"), summary = $("#cal-summary");
+  if (!grid) return;
+  const now = new Date();
+  const year = now.getFullYear(), month = now.getMonth();
+  title.textContent = now.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+  // swings-per-day for the current month
+  const counts = {};
+  let total = 0;
+  for (const it of libLoad()) {
+    if (!it.date) continue;
+    const d = new Date(it.date);
+    if (isNaN(d) || d.getFullYear() !== year || d.getMonth() !== month) continue;
+    counts[d.getDate()] = (counts[d.getDate()] || 0) + 1;
+    total++;
+  }
+
+  const dows = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = dows.map(d => `<span class="cal-dow">${d}</span>`);
+  for (let i = 0; i < firstDow; i++) cells.push(`<span class="cal-day blank"></span>`);
+  for (let day = 1; day <= daysInMonth; day++) {
+    const n = counts[day] || 0;
+    const heat = n >= 4 ? "c3" : n >= 2 ? "c2" : n === 1 ? "c1" : "";
+    const today = day === now.getDate() ? "today" : "";
+    const label = `${new Date(year, month, day).toLocaleDateString(undefined,
+      { month: "short", day: "numeric" })} — ${n} swing${n === 1 ? "" : "s"}`;
+    cells.push(`<span class="cal-day ${heat} ${today}" title="${esc(label)}"
+      aria-label="${esc(label)}">${day}</span>`);
+  }
+  grid.innerHTML = cells.join("");
+  summary.textContent = total
+    ? `${total} swing${total === 1 ? "" : "s"} analyzed this month`
+    : "No swings analyzed yet this month";
 }
 
 /* rename a swing (persists in localStorage across sessions; the team-library

@@ -22,6 +22,18 @@
 .dev-endpoints td { padding:5px 8px 5px 0; vertical-align:top; }
 .dev-endpoints td:first-child { white-space:nowrap; font-family:monospace; }
 .upload-status .err { color:#a33; }
+
+/* swing-frequency calendar */
+.cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-top:10px; max-width:420px; }
+.cal-dow { text-align:center; font-size:11px; font-weight:600; color:var(--muted); padding-bottom:2px; }
+.cal-day { aspect-ratio:1; border-radius:8px; background:var(--gray-soft);
+  display:flex; align-items:center; justify-content:center;
+  font-size:12px; color:var(--muted); }
+.cal-day.blank { background:transparent; }
+.cal-day.today { outline:2px solid var(--green); outline-offset:-2px; }
+.cal-day.c1 { background:var(--green-soft); color:var(--green); font-weight:600; }
+.cal-day.c2 { background:#b7e0c9; color:var(--green); font-weight:700; }
+.cal-day.c3 { background:var(--green); color:#fff; font-weight:700; }
 </style>
 </head>
 <body>
@@ -77,6 +89,15 @@
       you can leave and come back; links to a result can be shared.</p>
     </div>
     <div id="library-cards" class="dash-swings"></div>
+  </section>
+
+  <!-- swing-frequency calendar: how often you practiced this month -->
+  <section id="swing-cal" class="dashboard card" aria-label="Swing calendar">
+    <div class="dash-head">
+      <h2 class="dash-title" id="cal-title">This month</h2>
+      <p class="muted small" id="cal-summary"></p>
+    </div>
+    <div id="cal-grid" class="cal-grid"></div>
   </section>
 
   <!-- developer quickstart: the same API this page uses -->
@@ -311,6 +332,6 @@
 <script src="vendor/marked.min.js"></script>
 <script src="chat.js?v=20260726b"></script>
 <script src="ballflight.js?v=20260718d"></script>
-<script src="portal.js?v=20260802b"></script>
+<script src="portal.js?v=20260802d"></script>
 </body>
 </html>
