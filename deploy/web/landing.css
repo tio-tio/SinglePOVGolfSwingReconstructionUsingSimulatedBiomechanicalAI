@@ -32,7 +32,7 @@ a.btn-primary, a.btn-secondary { text-decoration: none; display: inline-block; }
 .l-problem-grid .good h3 { color: var(--green); }
 
 /* feature cards */
-.l-features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.l-features { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
 .l-feature { padding: 26px; }
 .l-feature-icon {
   display: inline-flex; align-items: center; justify-content: center;
@@ -91,7 +91,7 @@ a.btn-primary, a.btn-secondary { text-decoration: none; display: inline-block; }
 
 @media (max-width: 760px) {
   .l-hero h1 { font-size: 32px; }
-  .l-problem-grid, .l-features, .l-stats, .l-team { grid-template-columns: 1fr; }
+  .l-problem-grid, .l-stats, .l-team { grid-template-columns: 1fr; }
   .l-pipeline { flex-direction: column; align-items: center; }
   .l-step-arrow { transform: rotate(90deg); margin: 4px 0; }
 }

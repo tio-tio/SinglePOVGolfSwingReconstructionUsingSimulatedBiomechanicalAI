@@ -34,98 +34,156 @@
   <section class="t-hero">
     <span class="l-eyebrow">Technical deep dive</span>
     <h1>One phone video to a coaching scorecard</h1>
-    <p>Seven stages, two trained models, and a deterministic checker that stops the LLM from
-    inventing anything. This page walks through what actually runs — architectures, numbers,
-    and the code behind them.</p>
+    <p>Eight stages, a parallel ball-tracking branch, three trained models, and a deterministic
+    checker that stops the LLM from inventing anything. This page walks through what actually
+    runs — architectures, numbers, and the code behind them.</p>
   </section>
 
   <!-- ============================== pipeline flow diagram ============================== -->
   <section class="t-section">
     <h2>The pipeline at a glance</h2>
-    <p class="t-lede">A single 2D video becomes a 3D-grounded scorecard through five processing
-    stages plus the explanation layer.</p>
+    <p class="t-lede">A single 2D video becomes a 3D-grounded scorecard through eight processing
+    stages, while a parallel branch tracks the ball itself and fits its measured flight.</p>
     <div class="t-flow-wrap">
-      <svg viewBox="0 0 1140 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pipeline: upload, 2D pose, 3D lift, smoothing, event detection, coaching indicators, grounded explanation">
+      <svg viewBox="0 0 1150 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pipeline: upload, 2D pose, identity repair, 3D lift, smoothing, event detection, coaching indicators, grounded explanation — with a parallel ball-tracking branch of subpixel tracking, physics fit, and quality tiering feeding back into the explanation stage">
         <defs>
           <marker id="arrow" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
             <path d="M0,0 L7,3 L0,6 Z" fill="#9AA3AE"></path>
           </marker>
+          <marker id="arrowBlue" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#5aa0c2"></path>
+          </marker>
         </defs>
-        <!-- connecting arrows -->
+
+        <text x="1136" y="20" text-anchor="end" font-size="11" font-weight="700" letter-spacing="0.06em" fill="#9AA3AE">SWING TRACK</text>
+
+        <!-- connecting arrows, row 1 -->
         <g stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow)">
-          <line x1="145" y1="95" x2="185" y2="95"></line>
-          <line x1="310" y1="95" x2="350" y2="95"></line>
-          <line x1="475" y1="95" x2="515" y2="95"></line>
-          <line x1="640" y1="95" x2="680" y2="95"></line>
-          <line x1="805" y1="95" x2="845" y2="95"></line>
-          <line x1="970" y1="95" x2="1010" y2="95"></line>
+          <line x1="128" y1="95" x2="154" y2="95"></line>
+          <line x1="272" y1="95" x2="298" y2="95"></line>
+          <line x1="416" y1="95" x2="442" y2="95"></line>
+          <line x1="560" y1="95" x2="586" y2="95"></line>
+          <line x1="704" y1="95" x2="730" y2="95"></line>
+          <line x1="848" y1="95" x2="874" y2="95"></line>
+          <line x1="992" y1="95" x2="1018" y2="95"></line>
         </g>
-        <!-- boxes -->
+
         <!-- 1 upload -->
         <g>
-          <rect x="10" y="35" width="135" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <rect x="10" y="35" width="118" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
           <circle cx="35" cy="58" r="13" fill="#e6f4ec"></circle>
           <text x="35" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">1</text>
-          <text x="24" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Upload</text>
-          <text x="24" y="107" font-size="10.5" fill="#6b7a72">phone video</text>
-          <text x="24" y="122" font-size="10.5" fill="#6b7a72">MP4 / MOV</text>
+          <text x="23" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Upload</text>
+          <text x="23" y="107" font-size="10.5" fill="#6b7a72">phone video</text>
+          <text x="23" y="122" font-size="10.5" fill="#6b7a72">MP4 / MOV</text>
         </g>
         <!-- 2 2D pose -->
         <g>
-          <rect x="185" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
-          <circle cx="210" cy="58" r="13" fill="#e6f4ec"></circle>
-          <text x="210" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">2</text>
-          <text x="199" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">2D pose</text>
-          <text x="199" y="107" font-size="10.5" fill="#6b7a72">MediaPipe Lite</text>
-          <text x="199" y="122" font-size="10.5" fill="#6b7a72">COCO-17 / frame</text>
+          <rect x="154" y="35" width="118" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="179" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="179" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">2</text>
+          <text x="167" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">2D pose</text>
+          <text x="167" y="107" font-size="10.5" fill="#6b7a72">MediaPipe Lite</text>
+          <text x="167" y="122" font-size="10.5" fill="#6b7a72">COCO-17 / frame</text>
         </g>
-        <!-- 3 3D lift -->
+        <!-- 3 identity repair -->
         <g>
-          <rect x="350" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
-          <circle cx="375" cy="58" r="13" fill="#e6f4ec"></circle>
-          <text x="375" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">3</text>
-          <text x="364" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">3D lift</text>
-          <text x="364" y="107" font-size="10.5" fill="#6b7a72">GolfPose MixSTE2</text>
-          <text x="364" y="122" font-size="10.5" fill="#6b7a72">243-frame window</text>
+          <rect x="298" y="35" width="118" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="323" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="323" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">3</text>
+          <text x="311" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Identity</text>
+          <text x="311" y="103" font-size="12.5" font-weight="700" fill="#1d2b24">repair</text>
+          <text x="311" y="120" font-size="10.5" fill="#6b7a72">Viterbi L/R fix</text>
+          <text x="311" y="135" font-size="10.5" fill="#6b7a72">kills swap chains</text>
         </g>
-        <!-- 4 smoothing -->
+        <!-- 4 3D lift -->
         <g>
-          <rect x="515" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
-          <circle cx="540" cy="58" r="13" fill="#e6f4ec"></circle>
-          <text x="540" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">4</text>
-          <text x="529" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Smoothing</text>
-          <text x="529" y="107" font-size="10.5" fill="#6b7a72">One-Euro filter</text>
-          <text x="529" y="122" font-size="10.5" fill="#6b7a72">+ bone-length lock</text>
+          <rect x="442" y="35" width="118" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="467" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="467" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">4</text>
+          <text x="455" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">3D lift</text>
+          <text x="455" y="107" font-size="10.5" fill="#6b7a72">GolfPose MixSTE2</text>
+          <text x="455" y="122" font-size="10.5" fill="#6b7a72">243-frame window</text>
         </g>
-        <!-- 5 event detection -->
+        <!-- 5 smoothing -->
         <g>
-          <rect x="680" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
-          <circle cx="705" cy="58" r="13" fill="#e6f4ec"></circle>
-          <text x="705" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">5</text>
-          <text x="694" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Event</text>
-          <text x="694" y="103" font-size="12.5" font-weight="700" fill="#1d2b24">detection</text>
-          <text x="694" y="120" font-size="10.5" fill="#6b7a72">EventTCN, 0.26M</text>
-          <text x="694" y="135" font-size="10.5" fill="#6b7a72">params · 8 events</text>
+          <rect x="586" y="35" width="118" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="611" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="611" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">5</text>
+          <text x="599" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Smoothing</text>
+          <text x="599" y="107" font-size="10.5" fill="#6b7a72">One-Euro filter</text>
+          <text x="599" y="122" font-size="10.5" fill="#6b7a72">+ bone-length lock</text>
         </g>
-        <!-- 6 indicators -->
+        <!-- 6 event detection -->
         <g>
-          <rect x="845" y="35" width="125" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
-          <circle cx="870" cy="58" r="13" fill="#e6f4ec"></circle>
-          <text x="870" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">6</text>
-          <text x="859" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Indicators</text>
-          <text x="859" y="107" font-size="10.5" fill="#6b7a72">15 biomechanical</text>
-          <text x="859" y="122" font-size="10.5" fill="#6b7a72">measures vs tour</text>
+          <rect x="730" y="35" width="118" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="755" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="755" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">6</text>
+          <text x="743" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Event</text>
+          <text x="743" y="103" font-size="12.5" font-weight="700" fill="#1d2b24">detection</text>
+          <text x="743" y="120" font-size="10.5" fill="#6b7a72">EventTCN, 0.26M</text>
+          <text x="743" y="135" font-size="10.5" fill="#6b7a72">params · 8 events</text>
         </g>
-        <!-- 7 explanation (purple / LLM) -->
+        <!-- 7 indicators -->
         <g>
-          <rect x="1010" y="35" width="125" height="120" rx="14" fill="#f2ecfc" stroke="#ddd0f5"></rect>
-          <circle cx="1035" cy="58" r="13" fill="#e3d8f7"></circle>
-          <text x="1035" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#6d4ad0">7</text>
-          <text x="1024" y="90" font-size="12.5" font-weight="700" fill="#3d2a63">Grounded</text>
-          <text x="1024" y="103" font-size="12.5" font-weight="700" fill="#3d2a63">explanation</text>
-          <text x="1024" y="120" font-size="10.5" fill="#6d4ad0">Claude + verifier</text>
-          <text x="1024" y="135" font-size="10.5" fill="#6d4ad0">checks every claim</text>
+          <rect x="874" y="35" width="118" height="120" rx="14" fill="#ffffff" stroke="#e6e8e2"></rect>
+          <circle cx="899" cy="58" r="13" fill="#e6f4ec"></circle>
+          <text x="899" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#0C5C3A">7</text>
+          <text x="887" y="90" font-size="12.5" font-weight="700" fill="#1d2b24">Indicators</text>
+          <text x="887" y="107" font-size="10.5" fill="#6b7a72">15 biomechanical</text>
+          <text x="887" y="122" font-size="10.5" fill="#6b7a72">measures vs tour</text>
         </g>
+        <!-- 8 explanation (purple / LLM) -->
+        <g>
+          <rect x="1018" y="35" width="118" height="120" rx="14" fill="#f2ecfc" stroke="#ddd0f5"></rect>
+          <circle cx="1043" cy="58" r="13" fill="#e3d8f7"></circle>
+          <text x="1043" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#6d4ad0">8</text>
+          <text x="1031" y="90" font-size="12.5" font-weight="700" fill="#3d2a63">Grounded</text>
+          <text x="1031" y="103" font-size="12.5" font-weight="700" fill="#3d2a63">explanation</text>
+          <text x="1031" y="120" font-size="10.5" fill="#6d4ad0">Claude + verifier</text>
+          <text x="1031" y="135" font-size="10.5" fill="#6d4ad0">checks every claim</text>
+        </g>
+
+        <!-- branch down from 2D pose into the ball track (scale anchor) -->
+        <path d="M213,155 C 250,190 305,212 353,235" stroke="#5aa0c2" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#arrowBlue)"></path>
+        <text x="222" y="200" font-size="10" fill="#3f7794">2D pose scale</text>
+        <text x="222" y="212" font-size="10" fill="#3f7794">anchors the ball</text>
+
+        <text x="828" y="232" text-anchor="end" font-size="11" font-weight="700" letter-spacing="0.06em" fill="#3f7794">BALL TRACK · parallel</text>
+
+        <!-- connecting arrows, row 2 (ball track) -->
+        <g stroke="#bcdcec" stroke-width="2" fill="none" marker-end="url(#arrowBlue)">
+          <line x1="468" y1="295" x2="498" y2="295"></line>
+          <line x1="648" y1="295" x2="678" y2="295"></line>
+        </g>
+
+        <!-- A ball tracker -->
+        <g>
+          <rect x="318" y="245" width="150" height="100" rx="14" fill="#eaf5fb" stroke="#c9e2f2"></rect>
+          <text x="334" y="277" font-size="12.5" font-weight="700" fill="#164a63">Ball tracker</text>
+          <text x="334" y="295" font-size="10.5" fill="#3f7794">OpenCV · subpixel</text>
+          <text x="334" y="309" font-size="10.5" fill="#3f7794">centroid, per frame</text>
+          <text x="334" y="323" font-size="10.5" fill="#3f7794">physics-gated linking</text>
+        </g>
+        <!-- B physics fit -->
+        <g>
+          <rect x="498" y="245" width="150" height="100" rx="14" fill="#eaf5fb" stroke="#c9e2f2"></rect>
+          <text x="514" y="277" font-size="12.5" font-weight="700" fill="#164a63">Physics fit</text>
+          <text x="514" y="295" font-size="10.5" fill="#3f7794">hand-rolled</text>
+          <text x="514" y="309" font-size="10.5" fill="#3f7794">Nelder-Mead</text>
+          <text x="514" y="323" font-size="10.5" fill="#3f7794">speed · launch · azimuth</text>
+        </g>
+        <!-- C quality tier -->
+        <g>
+          <rect x="678" y="245" width="150" height="100" rx="14" fill="#eaf5fb" stroke="#c9e2f2"></rect>
+          <text x="694" y="277" font-size="12.5" font-weight="700" fill="#164a63">Quality tier</text>
+          <text x="694" y="295" font-size="10.5" fill="#3f7794">measured ≥15 pts</text>
+          <text x="694" y="309" font-size="10.5" fill="#3f7794">partial 8–14 pts</text>
+          <text x="694" y="323" font-size="10.5" fill="#3f7794">simulated &lt;8 pts</text>
+        </g>
+
+        <!-- converge into the grounded explanation -->
+        <path d="M753,245 C 830,205 950,178 1040,160" stroke="#5aa0c2" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#arrowBlue)"></path>
       </svg>
     </div>
   </section>
@@ -156,6 +214,22 @@
     <div class="t-stage">
       <div class="t-stage-num">3</div>
       <div>
+        <span class="t-tag">Identity repair</span>
+        <h3>A Viterbi pass fixes left/right limb swaps before anything is lifted to 3D</h3>
+        <p>Single-camera pose models occasionally flip left/right labels frame-to-frame — a wrist
+        crossing the body's midline can get relabeled as the opposite wrist. Uncorrected, that
+        flip corrupts every downstream rotation measurement (hip turn, X-factor) that depends on
+        knowing which side is which. A per-joint Viterbi decode treats "which identity is
+        correct this frame" as a hidden-state sequence and finds the lowest-cost path across the
+        whole clip, instead of trusting each frame in isolation — killing swap <em>chains</em>,
+        not just isolated flickers.</p>
+        <a class="t-code-link" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/Scripts/smoothing.py" target="_blank" rel="noopener">Scripts/smoothing.py →</a>
+      </div>
+    </div>
+
+    <div class="t-stage">
+      <div class="t-stage-num">4</div>
+      <div>
         <span class="t-tag">3D lift</span>
         <h3>GolfPose's MixSTE2 transformer reconstructs the depth</h3>
         <p>A single camera can't see rotation about the vertical axis — the very thing that
@@ -175,7 +249,7 @@
     </div>
 
     <div class="t-stage">
-      <div class="t-stage-num">4</div>
+      <div class="t-stage-num">5</div>
       <div>
         <span class="t-tag">Smoothing</span>
         <h3>One-Euro filtering + a bone-length lock</h3>
@@ -190,7 +264,7 @@
     </div>
 
     <div class="t-stage">
-      <div class="t-stage-num">5</div>
+      <div class="t-stage-num">6</div>
       <div>
         <span class="t-tag">Event detection</span>
         <h3>A trained detector finds the 8 swing events</h3>
@@ -229,7 +303,7 @@
     </div>
 
     <div class="t-stage">
-      <div class="t-stage-num">6</div>
+      <div class="t-stage-num">7</div>
       <div>
         <span class="t-tag">Coaching indicators</span>
         <h3>15 biomechanical measures, scored against tour pros</h3>
@@ -273,8 +347,52 @@
       </div>
     </div>
 
+    <div class="t-stage ball">
+      <div class="t-stage-num">⛳</div>
+      <div>
+        <span class="t-tag">Ball tracking · parallel branch</span>
+        <h3>A subpixel tracker follows the ball; physics fills in the rest</h3>
+        <p>Monocular ball tracking has no size cue — a golf ball is a 3–6 px dot with no reliable
+        depth signal. Rather than a learned detector, a <strong>classical stabilized frame-diff +
+        physics-gated linker</strong> follows the ball frame to frame: candidate tracks must
+        originate near the impact-frame club/wrist region (from the pose stage), rise at a
+        plausible launch angle, stay geometrically straight, and never back-extrapolate into a
+        neighboring bay's ball already in flight. Each discriminator was added to kill one
+        specific observed failure mode (flags, birds, other players' shots, club-arc ghosting).</p>
+        <p>The measured 2D track is then fit to a <strong>physics forward-model</strong>
+        (projectile motion + drag/Magnus lift) with a hand-rolled Nelder-Mead optimizer — no
+        scipy in the Lambda runtime — solving for ball speed, launch angle, and azimuth that best
+        reproduce the observed pixel trajectory, anchored in scale by the golfer's pose-derived
+        body height. Speed is only reported when enough subpixel points are recovered to pin the
+        scale ambiguity that makes monocular ball speed otherwise unidentifiable.</p>
+        <div class="t-bench">
+          <div class="t-bar-row">
+            <div class="t-bar-label">simulated<small>no track — club-default launch conditions</small></div>
+            <div class="t-bar-track"><div class="t-bar-fill" style="width:20%"></div></div>
+            <div class="t-bar-val">&lt;8 pts</div>
+          </div>
+          <div class="t-bar-row">
+            <div class="t-bar-label">partial<small>direction measured, speed assumed from envelope</small></div>
+            <div class="t-bar-track"><div class="t-bar-fill ref" style="width:55%"></div></div>
+            <div class="t-bar-val">8–14 pts</div>
+          </div>
+          <div class="t-bar-row">
+            <div class="t-bar-label">measured<small>speed, launch, azimuth, carry — with a bootstrap CI</small></div>
+            <div class="t-bar-track"><div class="t-bar-fill best" style="width:100%"></div></div>
+            <div class="t-bar-val">≥15 pts</div>
+          </div>
+        </div>
+        <p class="t-bench-note">Validated on two real swing videos: a 20-point track fit speed
+        150–160 mph, launch 24.0–26.5°, carry 237–257 yd (measured tier); an 8-point track landed
+        in the partial tier, reporting direction confidently and carry as an envelope-based
+        estimate. The chat coach cites whichever tier applies and phrases confidence accordingly —
+        a measured carry is stated plainly, a simulated one is always labeled as an estimate.</p>
+        <a class="t-code-link" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/Scripts/ball_track.py" target="_blank" rel="noopener">Scripts/ball_track.py →</a>
+      </div>
+    </div>
+
     <div class="t-stage llm">
-      <div class="t-stage-num">7</div>
+      <div class="t-stage-num">8</div>
       <div>
         <span class="t-tag">Grounded explanation</span>
         <h3>An LLM writes the read — a verifier checks every claim</h3>
@@ -305,61 +423,101 @@
   <!-- ============================== deployment architecture ============================== -->
   <section class="t-section">
     <h2>How it's deployed</h2>
-    <p class="t-lede">A scale-to-zero serverless demo — no GPU, no always-on compute.</p>
+    <p class="t-lede">A real upload pipeline on AWS, not just a cached demo: a golfer's own video
+    goes in one end, a 3D replay and coaching chat come out the other.</p>
     <div class="t-arch-wrap">
-      <svg viewBox="0 0 1140 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Deployment architecture: browser to CloudFront and S3 for the static UI, and to a Lambda Function URL running a CPU container that calls the Anthropic API and caches results in S3">
+      <svg viewBox="0 0 1150 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Deployment architecture: browser through CloudFront and API Gateway to S3 uploads, EventBridge, SQS and a containerized processing Lambda running the pose and ball tracks, landing in S3 outputs, served back through CloudFront to a results page and a coaching chat backed by Amazon Bedrock">
         <defs>
           <marker id="arrow2" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
             <path d="M0,0 L7,3 L0,6 Z" fill="#9AA3AE"></path>
           </marker>
         </defs>
-        <!-- Browser -->
-        <rect x="470" y="10" width="200" height="56" rx="12" fill="#1d2b24"></rect>
-        <text x="570" y="44" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">Browser</text>
 
-        <!-- arrows from browser -->
-        <path d="M520,66 C 460,110 360,110 300,124" stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)"></path>
-        <path d="M620,66 C 700,110 800,110 860,124" stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)"></path>
+        <!-- row A: ingest -->
+        <g stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)">
+          <line x1="163" y1="55" x2="177" y2="55"></line>
+          <line x1="323" y1="55" x2="337" y2="55"></line>
+          <line x1="483" y1="55" x2="497" y2="55"></line>
+          <line x1="643" y1="55" x2="657" y2="55"></line>
+          <line x1="803" y1="55" x2="817" y2="55"></line>
+          <line x1="963" y1="55" x2="977" y2="55"></line>
+        </g>
+        <rect x="13" y="20" width="150" height="70" rx="12" fill="#1d2b24"></rect>
+        <text x="88" y="50" text-anchor="middle" font-size="12.5" font-weight="700" fill="#ffffff">Browser</text>
+        <text x="88" y="66" text-anchor="middle" font-size="10" fill="#c9cdc5">swing video</text>
 
-        <!-- left branch: static UI -->
-        <rect x="150" y="128" width="230" height="56" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
-        <text x="265" y="152" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">CloudFront (CDN)</text>
-        <text x="265" y="168" text-anchor="middle" font-size="10.5" fill="#6b7a72">Origin Access Control</text>
-        <line x1="265" y1="184" x2="265" y2="212" stroke="#c9cdc5" stroke-width="2" marker-end="url(#arrow2)"></line>
-        <rect x="150" y="216" width="230" height="66" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
-        <text x="265" y="240" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">S3 — static web bucket</text>
-        <text x="265" y="257" text-anchor="middle" font-size="10.5" fill="#6b7a72">about.html · portal.html</text>
-        <text x="265" y="271" text-anchor="middle" font-size="10.5" fill="#6b7a72">styles · JS · vendor</text>
+        <rect x="177" y="20" width="150" height="70" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="252" y="50" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">CloudFront</text>
+        <text x="252" y="66" text-anchor="middle" font-size="10" fill="#6b7a72">static site</text>
 
-        <!-- right branch: compute -->
-        <rect x="750" y="128" width="240" height="56" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
-        <text x="870" y="152" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">Lambda Function URL</text>
-        <text x="870" y="168" text-anchor="middle" font-size="10.5" fill="#6b7a72">CORS-enabled, reserved concurrency</text>
-        <line x1="870" y1="184" x2="870" y2="212" stroke="#c9cdc5" stroke-width="2" marker-end="url(#arrow2)"></line>
-        <rect x="740" y="216" width="260" height="80" rx="12" fill="#e6f4ec" stroke="#cfe4d8"></rect>
-        <text x="870" y="240" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0C5C3A">Container image (CPU)</text>
-        <text x="870" y="257" text-anchor="middle" font-size="10.5" fill="#33403b">cached 3D parquet → EventTCN</text>
-        <text x="870" y="271" text-anchor="middle" font-size="10.5" fill="#33403b">→ indicators → scorecard render</text>
-        <text x="870" y="285" text-anchor="middle" font-size="10.5" fill="#33403b">torch CPU · ~1–1.5 GB image</text>
+        <rect x="337" y="20" width="150" height="70" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="412" y="50" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">API Gateway</text>
+        <text x="412" y="66" text-anchor="middle" font-size="10" fill="#6b7a72">POST /upload-url</text>
 
-        <!-- branch from container -->
-        <path d="M820,296 C 780,320 740,330 700,344" stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)"></path>
-        <path d="M920,296 C 960,320 990,330 1010,344" stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)"></path>
+        <rect x="497" y="20" width="150" height="70" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="572" y="50" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">S3 · uploads</text>
+        <text x="572" y="66" text-anchor="middle" font-size="10" fill="#6b7a72">01_inputs/</text>
 
-        <rect x="560" y="348" width="200" height="46" rx="11" fill="#ffffff" stroke="#e6e8e2"></rect>
-        <text x="660" y="367" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1d2b24">S3 — result cache</text>
-        <text x="660" y="382" text-anchor="middle" font-size="10" fill="#6b7a72">explanation + PNG, per clip</text>
+        <rect x="657" y="20" width="150" height="70" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="732" y="50" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">EventBridge</text>
+        <text x="732" y="66" text-anchor="middle" font-size="10" fill="#6b7a72">object-created</text>
 
-        <rect x="900" y="348" width="220" height="46" rx="11" fill="#f2ecfc" stroke="#ddd0f5"></rect>
-        <text x="1010" y="367" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3d2a63">Anthropic API</text>
-        <text x="1010" y="382" text-anchor="middle" font-size="10" fill="#6d4ad0">claude-opus-4-8, grounded explain</text>
+        <rect x="817" y="20" width="150" height="70" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="892" y="50" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">SQS ingest</text>
+        <text x="892" y="66" text-anchor="middle" font-size="10" fill="#6b7a72">+ DLQ</text>
+
+        <rect x="977" y="20" width="160" height="70" rx="12" fill="#e6f4ec" stroke="#cfe4d8"></rect>
+        <text x="1057" y="50" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0C5C3A">Processing Lambda</text>
+        <text x="1057" y="66" text-anchor="middle" font-size="10" fill="#33403b">container image · CPU</text>
+
+        <!-- down into the container -->
+        <line x1="1057" y1="90" x2="1057" y2="112" stroke="#c9cdc5" stroke-width="2" marker-end="url(#arrow2)"></line>
+
+        <!-- row B: inside the container -->
+        <rect x="177" y="116" width="960" height="74" rx="14" fill="#e6f4ec" stroke="#cfe4d8"></rect>
+        <text x="197" y="140" font-size="12.5" font-weight="700" fill="#0C5C3A">Inside the processing container</text>
+        <text x="197" y="158" font-size="10.5" fill="#33403b">Pose track: 2D pose → identity repair → 3D lift → smoothing → event detection → indicators → grounded explanation</text>
+        <text x="197" y="174" font-size="10.5" fill="#33403b">Ball track (parallel): subpixel tracker → physics fit → quality tier — see stages 2–8 above</text>
+
+        <line x1="450" y1="190" x2="450" y2="212" stroke="#c9cdc5" stroke-width="2" marker-end="url(#arrow2)"></line>
+
+        <!-- row C: delivery -->
+        <g stroke="#c9cdc5" stroke-width="2" fill="none" marker-end="url(#arrow2)">
+          <line x1="375" y1="255" x2="389" y2="255"></line>
+          <line x1="545" y1="255" x2="559" y2="255"></line>
+          <line x1="715" y1="255" x2="729" y2="255"></line>
+          <line x1="885" y1="255" x2="899" y2="255"></line>
+        </g>
+        <rect x="215" y="220" width="160" height="70" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="295" y="250" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">S3 · outputs</text>
+        <text x="295" y="266" text-anchor="middle" font-size="10" fill="#6b7a72">03_outputs/&lt;job_id&gt;/</text>
+
+        <rect x="389" y="220" width="150" height="70" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="464" y="250" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">CloudFront</text>
+        <text x="464" y="266" text-anchor="middle" font-size="10" fill="#6b7a72">/03_outputs</text>
+
+        <rect x="559" y="220" width="150" height="70" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="634" y="245" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">Results page</text>
+        <text x="634" y="261" text-anchor="middle" font-size="10" fill="#6b7a72">overlay · 3D replay</text>
+        <text x="634" y="275" text-anchor="middle" font-size="10" fill="#6b7a72">scorecard · ball arc</text>
+
+        <rect x="729" y="220" width="150" height="70" rx="12" fill="#ffffff" stroke="#e6e8e2"></rect>
+        <text x="804" y="250" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d2b24">Chat</text>
+        <text x="804" y="266" text-anchor="middle" font-size="10" fill="#6b7a72">grounded Q&amp;A</text>
+
+        <rect x="899" y="220" width="220" height="70" rx="12" fill="#f2ecfc" stroke="#ddd0f5"></rect>
+        <text x="1009" y="250" text-anchor="middle" font-size="12.5" font-weight="700" fill="#3d2a63">Amazon Bedrock</text>
+        <text x="1009" y="266" text-anchor="middle" font-size="10" fill="#6d4ad0">get_ball_flight tool + more</text>
       </svg>
     </div>
-    <p class="t-arch-note">The UI is static (S3 + CloudFront). The compute path is a single
-    container-image Lambda behind a Function URL — cold-starts in 10–25s, warm in ~150ms. Spend
-    is architecturally bounded: the demo only serves a curated clip allow-list, and every clip's
-    explanation is cached in S3 after its first Anthropic call, so repeat views cost $0 in tokens.
-    No GPU, no database, no always-on server.</p>
+    <p class="t-arch-note">Uploads go straight to S3 via a presigned POST — the browser never
+    touches compute directly. An <code>EventBridge → SQS → Lambda</code> chain then runs the same
+    pose + ball-track pipeline as the local demo inside a CPU-only container image (torch CPU,
+    ~1–1.5 GB, cold-starts in 10–25s, warm ~150ms), writing queryable rows via the RDS Data API.
+    The coaching chat runs on <strong>Amazon Bedrock</strong>, not a direct model API call. Spend
+    stays bounded: the curated demo clips cache their explanation in S3 after the first call so
+    repeat views cost $0 in tokens, and uploads are capped by file size and reserved concurrency.
+    No GPU, no always-on server.</p>
   </section>
 
   <!-- ============================== links ============================== -->
@@ -380,7 +538,17 @@
       <a class="t-link-card" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/AWS_DEPLOY_HANDOFF.md" target="_blank" rel="noopener">
         <div class="tl-title">Deployment handoff</div>
         <div class="tl-path">AWS_DEPLOY_HANDOFF.md</div>
-        <div class="tl-desc">The full serverless build: Lambda container, cost controls, runbook.</div>
+        <div class="tl-desc">The original serverless build spec: Lambda container, cost controls, runbook.</div>
+      </a>
+      <a class="t-link-card" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/deploy/BALL_TRACKING_PLAN.md" target="_blank" rel="noopener">
+        <div class="tl-title">Ball-tracking research log</div>
+        <div class="tl-path">deploy/BALL_TRACKING_PLAN.md</div>
+        <div class="tl-desc">The full iteration log: detector candidates, discriminator stack, physics-fit validation.</div>
+      </a>
+      <a class="t-link-card" href="https://github.com/tio-tio/SinglePOVGolfSwingReconstructionUsingSimulatedBiomechanicalAI/blob/main/deploy/BALL_FLIGHT_PLAN.md" target="_blank" rel="noopener">
+        <div class="tl-title">Ball-flight simulation plan</div>
+        <div class="tl-path">deploy/BALL_FLIGHT_PLAN.md</div>
+        <div class="tl-desc">The physics engine behind the "simulated" tier, validated against tour averages.</div>
       </a>
     </div>
   </section>

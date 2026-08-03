@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0c5c3a">
-<meta name="description" content="MotionCaddie reconstructs a golfer's 3D swing from a single phone video and turns it into tour-referenced, plain-English coaching — no marker suit, no multi-camera rig.">
+<meta name="description" content="MotionCaddie reconstructs a golfer's 3D swing from a single phone video and turns it into tour-referenced, plain-English coaching and a measured ball-flight readout — no marker suit, no multi-camera rig, no launch monitor.">
 <title>MotionCaddie — 3D swing analysis from one phone video</title>
 <link rel="preconnect" href="https://api.fontshare.com">
 <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
@@ -24,6 +24,7 @@
     <a class="btn-text" href="#how-it-works">How it works</a>
     <a class="btn-text" href="#results">Results</a>
     <a class="btn-text" href="#team">Team</a>
+    <a class="btn-text" href="tech.html">Technical deep dive</a>
   </nav>
   <a class="btn-primary" href="portal.html" style="padding:10px 20px;font-size:14px;">Try the demo</a>
 </header>
@@ -35,8 +36,9 @@
     <span class="l-eyebrow">MIDS W210 Capstone · UC Berkeley School of Information</span>
     <h1>See your golf swing in 3D<br>from <em>one</em> phone video.</h1>
     <p class="l-hero-sub">MotionCaddie reconstructs a full 3D swing from a single 2D clip, measures
-    it against tour-pro reference ranges, and explains what it found in plain English — grounded
-    only in what was actually measured, never invented advice.</p>
+    it against tour-pro reference ranges, tracks the ball's actual flight when it's visible in
+    frame, and explains what it found in plain English — grounded only in what was actually
+    measured, never invented advice.</p>
     <div class="l-hero-ctas">
       <a class="btn-primary large" href="portal.html">Try the live demo</a>
       <a class="btn-secondary large" href="tech.html">See the pipeline in depth</a>
@@ -87,6 +89,13 @@
         against a tour-pro reference distribution.</p>
       </div>
       <div class="card l-feature">
+        <div class="l-feature-icon" aria-hidden="true">🏌️</div>
+        <h3>Measured ball flight, not a guess</h3>
+        <p>When the ball is visible in frame, a subpixel tracker follows it and fits a physics
+        model to the real trajectory — reporting speed, launch angle, and carry with a confidence
+        band. Can't see the ball? It falls back to a club-based estimate, clearly labeled as such.</p>
+      </div>
+      <div class="card l-feature">
         <div class="l-feature-icon" aria-hidden="true">💬</div>
         <h3>A coach that won't make things up</h3>
         <p>The explanation layer is only allowed to describe measured numbers. A grounding verifier
@@ -99,7 +108,8 @@
   <section class="l-section" id="how-it-works">
     <div class="l-section-head">
       <h2>How it works</h2>
-      <p>One phone video goes through five stages to become a coaching scorecard.</p>
+      <p>One phone video goes through six stages to become a coaching scorecard — while a parallel
+      stage tracks the ball itself.</p>
     </div>
     <div class="l-pipeline">
       <div class="l-step">
@@ -110,29 +120,35 @@
       <span class="l-step-arrow" aria-hidden="true">→</span>
       <div class="l-step">
         <div class="l-step-num">2</div>
+        <h4>Identity repair</h4>
+        <p>A Viterbi pass fixes left/right limb swaps before anything is lifted to 3D.</p>
+      </div>
+      <span class="l-step-arrow" aria-hidden="true">→</span>
+      <div class="l-step">
+        <div class="l-step-num">3</div>
         <h4>3D lift</h4>
         <p>A pose-lifting model reconstructs the depth a single camera can't see.</p>
       </div>
       <span class="l-step-arrow" aria-hidden="true">→</span>
       <div class="l-step">
-        <div class="l-step-num">3</div>
+        <div class="l-step-num">4</div>
         <h4>Event detection</h4>
         <p>A trained model finds address, top, impact and follow-through.</p>
       </div>
       <span class="l-step-arrow" aria-hidden="true">→</span>
       <div class="l-step">
-        <div class="l-step-num">4</div>
+        <div class="l-step-num">5</div>
         <h4>Indicators</h4>
         <p>15 biomechanical measurements, scored against tour reference.</p>
       </div>
       <span class="l-step-arrow" aria-hidden="true">→</span>
       <div class="l-step">
-        <div class="l-step-num">5</div>
+        <div class="l-step-num">6</div>
         <h4>Grounded explanation</h4>
         <p>An LLM writes a plain-English read, verified against the numbers.</p>
       </div>
     </div>
-    <p class="l-note"><a href="tech.html">Read the full technical deep dive — model architectures, benchmark numbers, and the grounding verifier →</a></p>
+    <p class="l-note"><a href="tech.html">Read the full technical deep dive — model architectures, benchmark numbers, the ball-tracking physics fit, and the grounding verifier →</a></p>
   </section>
 
   <!-- ============================== results ============================== -->

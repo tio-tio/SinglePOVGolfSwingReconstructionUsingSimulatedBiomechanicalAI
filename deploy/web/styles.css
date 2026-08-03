@@ -45,6 +45,8 @@ a.brand { text-decoration: none; }
 a.brand:hover .brand-name { text-decoration: underline; }
 .brand-logo { height: 36px; width: auto; display: block; }
 
+.site-links { display: flex; align-items: center; gap: 4px; }
+
 .progress-nav { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
 .pstep { display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; transition: all .25s; }
 .pnum {
