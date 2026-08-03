@@ -28,12 +28,14 @@
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px;
 }
 .t-stage.llm .t-stage-num { background: var(--purple-soft); color: var(--purple); }
+.t-stage.ball .t-stage-num { background: #eaf5fb; color: #1f6f9c; font-size: 18px; }
 .t-stage h3 { margin: 0 0 6px; font-size: 18px; color: var(--ink); }
 .t-stage .t-tag {
   display: inline-block; font-size: 12px; font-weight: 600; color: var(--green);
   background: var(--green-soft); padding: 3px 10px; border-radius: 999px; margin: 0 0 10px;
 }
 .t-stage.llm .t-tag { color: var(--purple); background: var(--purple-soft); }
+.t-stage.ball .t-tag { color: #1f6f9c; background: #eaf5fb; }
 .t-stage p { margin: 0 0 10px; color: var(--muted); font-size: 15px; line-height: 1.55; }
 .t-stage p:last-of-type { margin-bottom: 0; }
 .t-stage code { background: var(--gray-soft); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
@@ -82,7 +84,7 @@
 .t-arch-note { font-size: 13px; color: var(--muted); margin-top: 14px; max-width: 680px; }
 
 /* ---------------------------- links footer ---------------------------- */
-.t-links { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.t-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .t-link-card {
   display: block; background: var(--card); border-radius: 12px; box-shadow: var(--shadow);
   padding: 16px 18px; text-decoration: none; color: inherit;
